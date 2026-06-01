@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Gold Circle Background -->
+  <circle cx="256" cy="256" r="256" fill="#cca352"/>
+  
+  <!-- Black Scissors Icon (scaled and centered) -->
+  <!-- Similar to lucide-react scissors but thicker and larger -->
+  <g transform="translate(106, 106) scale(12.5)" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <circle cx="6" cy="6" r="3"></circle>
+    <path d="M8.12 8.12 12 12"></path>
+    <path d="M20 4 8.12 15.88"></path>
+    <circle cx="6" cy="18" r="3"></circle>
+    <path d="M14.8 14.8 20 20"></path>
+  </g>
+</svg>
