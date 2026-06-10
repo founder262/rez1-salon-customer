@@ -28,8 +28,11 @@ const LoginPage = () => {
     if (!validate()) return;
     setLoading(true);
 
+    // Clear any stale recovery sessions before signing in
+    await supabase.auth.signOut();
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: emailOrUser.trim(), // Assuming they sign in with email via Supabase Auth. For username auth, RPC or edge function is typically needed.
+      email: emailOrUser.trim(),
       password: password,
     });
 
@@ -45,20 +48,27 @@ const LoginPage = () => {
     // Check if customer profile exists
     const { data: customer, error: fetchError } = await supabase
       .from("customers")
-      .select("id, full_name, preferred_location_id")
+      .select("id, full_name, preferred_location_id, profile_completed")
       .eq("id", userId)
       .maybeSingle();
 
-    if (!customer) {
-      const { error: insertError } = await supabase.from("customers").insert({ id: userId, email: emailOrUser.trim() });
+    if (fetchError) {
+      console.error("Fetch Error:", fetchError);
+    }
+
+    if (!customer && !fetchError) {
+      const { error: insertError } = await supabase.from("customers").upsert(
+        { id: userId, email: emailOrUser.trim() },
+        { onConflict: 'id' }
+      );
       if (insertError) {
-        console.error("Failed to create customer profile:", insertError);
+        console.error("Failed to create/upsert customer profile:", insertError);
         toast.error(`Database Error: ${insertError.message}`);
         setLoading(false);
         return;
       }
       navigate("/profile-setup");
-    } else if (!customer.full_name) {
+    } else if (customer.profile_completed === false || !customer.full_name) {
       navigate("/profile-setup");
     } else if (!customer.preferred_location_id) {
       navigate("/location");
@@ -136,7 +146,7 @@ const LoginPage = () => {
             <div className="flex flex-col gap-2">
               <div className="flex justify-between items-center ml-1 mr-1">
                 <label className="text-xs font-bold text-[#888] uppercase tracking-wider">Password</label>
-                <Link to="#" className="text-xs font-bold text-[#B8860B] hover:text-[#F5D07A] transition-colors">FORGOT?</Link>
+                <Link to="/forgot-password" className="text-xs font-bold text-[#B8860B] hover:text-[#F5D07A] transition-colors">FORGOT?</Link>
               </div>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#555]" />

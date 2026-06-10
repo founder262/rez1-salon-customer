@@ -36,14 +36,31 @@ const HomePage = () => {
       let locName = localStorage.getItem("rez1_location_name") || "";
 
       if (user) {
-        const { data: customer } = await supabase
+        const { data: customer, error: customerErr } = await supabase
           .from("customers")
-          .select("preferred_location_id, locations(id, name)")
+          .select("preferred_location_id, profile_completed")
           .eq("id", user.id)
           .maybeSingle();
-        if (customer?.preferred_location_id) {
-          locId = customer.preferred_location_id;
-          locName = (customer as any).locations?.name || locName;
+
+        // Only act on customer data if the query succeeded
+        if (!customerErr) {
+          if (customer && customer.profile_completed === false) {
+            navigate("/profile-setup");
+            return;
+          }
+
+          if (customer?.preferred_location_id) {
+            locId = customer.preferred_location_id;
+            // Fetch location name separately to avoid PostgREST implicit join (requires named FK)
+            const { data: locationData } = await supabase
+              .from("locations")
+              .select("name")
+              .eq("id", customer.preferred_location_id)
+              .maybeSingle();
+            locName = locationData?.name || locName;
+          }
+        } else {
+          console.warn("Could not fetch customer profile, falling back to localStorage:", customerErr.message);
         }
       }
 
@@ -62,14 +79,19 @@ const HomePage = () => {
     if (!selectedLocationId) return;
     let q = supabase
       .from("salons")
-      .select("id, name, salon_images, categories, rating, review_count, address, open_time, close_time, is_open, subscription, salon_offers(*), services(id, name, price, duration)")
-      .eq("location_id", selectedLocationId)
+      .select("id, name, salon_images, categories, rating, review_count, address, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration)")
       .eq("is_suspended", false)
       .eq("is_visible", true)
       .eq("is_approved", true)
       .order("rating", { ascending: false });
 
-    if (query && searchMode === "salon") q = q.ilike("name", `%${query}%`);
+    // If searching by salon name, do NOT filter by location so they can see all branches
+    if (query && searchMode === "salon") {
+      q = q.ilike("name", `%${query}%`);
+    } else {
+      q = q.eq("location_id", selectedLocationId);
+    }
+
     if (categoryFilter !== "All") q = q.contains("categories", [categoryFilter]);
 
     const { data, error } = await q;
@@ -78,16 +100,15 @@ const HomePage = () => {
   };
 
   const fetchBanners = async () => {
-    const { data } = await supabase.functions.invoke("admin-api", {
-      body: {
-        action: "SELECT",
-        table: "promo_banners",
-        query: "*",
-        eqFilters: [{ column: "is_active", value: true }],
-        orderBy: { column: "display_order", ascending: true }
-      }
-    });
-    setBanners(data?.data || []);
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    const { data } = await supabase
+      .from("promo_banners")
+      .select("*")
+      .eq("is_active", true)
+      .order("display_order", { ascending: true });
+    const validBanners = (data || []).filter((b: any) => !b.end_date || b.end_date >= today);
+    setBanners(validBanners);
   };
 
   // Fetch salons whenever location / filters change
@@ -100,6 +121,17 @@ const HomePage = () => {
   useEffect(() => {
     fetchBanners();
   }, []);
+
+  // Real-time listener for services changes to update salon lists dynamically
+  useEffect(() => {
+    const channel = supabase
+      .channel('home-services-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => {
+        if (selectedLocationId) fetchSalons();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedLocationId, categoryFilter, query, searchMode]);
 
   return (
     <div className="min-h-[100dvh] bg-background safe-bottom">
@@ -232,9 +264,9 @@ const HomePage = () => {
             };
             const offerPercent = getOfferPercent(salon.salon_offers?.[0]);
             const priceRange = salon.services?.[0]?.price ? `From ₹${salon.services[0].price}` : "Prices vary";
-            const isClosed = salon.is_open === false || salon.is_booking_paused === true;
+            const isClosed = salon.is_booking_paused === true || salon.is_emergency_mode === true;
             
-            let nextAvailable = "Currently Closed";
+            let nextAvailable = salon.is_emergency_mode ? "Temporarily Closed" : "Currently Closed";
             if (!isClosed) {
               const now = new Date();
               const currentMins = now.getHours() * 60 + now.getMinutes();
@@ -309,7 +341,7 @@ const HomePage = () => {
                     <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-[2px]">
                       <div className="rounded-xl bg-destructive px-3 py-1.5 shadow-lg shadow-black/20">
                         <span className="text-xs font-bold uppercase tracking-wider text-destructive-foreground">
-                          Closed
+                          {salon.is_emergency_mode ? "Temporarily Closed" : "Closed"}
                         </span>
                       </div>
                     </div>

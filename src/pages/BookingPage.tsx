@@ -143,7 +143,7 @@ const BookingPage = () => {
   const slots = useMemo(() => {
     if (!days[selectedDay] || !salon) return [];
     const allSlots = generateTimeSlots(days[selectedDay], totalWithBuffer, salon.open_time, salon.close_time);
-    if (salon.is_open === false || salon.is_booking_paused === true) {
+    if (salon.is_emergency_mode === true || salon.is_booking_paused === true) {
       return allSlots.map(s => ({ ...s, available: false }));
     }
     // Mark owner-blocked slots and capacity-full slots as unavailable

@@ -23,3 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Lock files — keep only bun.lock (text). bun.lockb is binary and causes huge diffs.
+bun.lockb
+package-lock.json
+
+# Supabase temp files (auto-generated, no need to track)
+supabase/.temp/

@@ -7,6 +7,8 @@ import { ThemeProvider } from "@/lib/theme";
 import BottomNav from "@/components/BottomNav";
 import EntryPage from "@/pages/EntryPage";
 import LoginPage from "@/pages/LoginPage";
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import LocationPage from "@/pages/LocationPage";
 import HomePage from "@/pages/HomePage";
 import SalonDetailPage from "@/pages/SalonDetailPage";
@@ -42,6 +44,8 @@ const App = () => (
             <Routes>
               <Route path="/" element={<EntryPage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/signup" element={<SignUpPage />} />
               <Route path="/location" element={<LocationPage />} />
               <Route path="/profile-setup" element={<ProfileSetupPage />} />

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Star, MapPin, Navigation, Check, Users, Minus, Plus, Heart } from "lucide-react";
 import { useFavorites } from "@/contexts/FavoritesContext";
@@ -15,9 +15,11 @@ const SalonDetailPage = () => {
   const [salon, setSalon] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  const location = useLocation();
   const { toggleFavorite, isFavorite } = useFavorites();
-  const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [personCount, setPersonCount] = useState(1);
+  const [selectedServices, setSelectedServices] = useState<string[]>(location.state?.selectedServices || []);
+  const [personCount, setPersonCount] = useState(location.state?.personCount || 1);
+  const reschedulingBookingId = location.state?.reschedulingBookingId || null;
 
   const fetchSalonDetail = async (salonId: string) => {
     // Fetch salon core data + services separately to avoid RLS join issues
@@ -46,6 +48,18 @@ const SalonDetailPage = () => {
 
   useEffect(() => {
     if (id) fetchSalonDetail(id);
+  }, [id]);
+
+  // Real-time listener for services changes (Admin Sync)
+  useEffect(() => {
+    if (!id) return;
+    const channel = supabase
+      .channel('salon-services-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'services', filter: `salon_id=eq.${id}` }, () => {
+        fetchSalonDetail(id);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [id]);
 
   const toggleService = (serviceId: string) => {
@@ -136,9 +150,9 @@ const SalonDetailPage = () => {
         <div className="mb-4">
           <h1 className="font-display text-xl font-bold text-foreground flex items-center gap-2">
             {salon.name}
-            {(salon.is_open === false || salon.is_booking_paused === true) && (
+            {(salon.is_open === false || salon.is_booking_paused === true || salon.is_emergency_mode === true) && (
               <span className="rounded-md bg-destructive px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-destructive-foreground">
-                Closed
+                {salon.is_emergency_mode ? "Temporarily Closed" : "Closed"}
               </span>
             )}
           </h1>
@@ -155,18 +169,30 @@ const SalonDetailPage = () => {
         </div>
 
         {/* Offer Banner */}
-        {offerPercent > 0 && (
+        {offer && offer.active_type !== 'none' && (
           <div className="mb-4 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#e31837]/10 to-primary/10 border border-[#e31837]/20 px-4 py-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#e31837] text-white text-base font-black">
               %
             </span>
             <div>
-              <p className="text-sm font-bold text-foreground">{offerPercent}% OFF on all services!</p>
-              <p className="text-xs text-muted-foreground">
-                {offer?.active_type === 'all_days' && 'Valid every day'}
-                {offer?.active_type === 'weekday_weekend' && 'Weekday & weekend discount'}
-                {offer?.active_type === 'specific_day' && `Valid on ${offer?.specific_day_date}`}
-              </p>
+              {offer.active_type === 'weekday_weekend' ? (
+                <>
+                  <p className="text-sm font-bold text-foreground">Weekday & Weekend Sale!</p>
+                  <p className="text-xs text-muted-foreground">
+                    {offer.weekday_percentage || 0}% OFF (Mon-Fri) | {offer.weekend_percentage || 0}% OFF (Sat-Sun)
+                  </p>
+                </>
+              ) : offer.active_type === 'specific_day' ? (
+                <>
+                  <p className="text-sm font-bold text-foreground">{offer.specific_day_percentage || 0}% OFF</p>
+                  <p className="text-xs text-muted-foreground">Valid on {offer.specific_day_date}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-bold text-foreground">{offer.all_days_percentage || 0}% OFF on all services!</p>
+                  <p className="text-xs text-muted-foreground">Valid every day</p>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -348,14 +374,16 @@ const SalonDetailPage = () => {
               </div>
             </div>
             <button
-              onClick={() =>
+              onClick={() => {
+                if (salon.is_emergency_mode) return;
                 navigate(`/booking/${salon.id}`, {
-                  state: { selectedServices, personCount, servicesContent: selectedDetails.services },
-                })
-              }
-              className="rounded-2xl bg-primary px-8 py-3 text-sm font-semibold text-primary-foreground transition-transform active:scale-[0.97]"
+                  state: { selectedServices, personCount, servicesContent: selectedDetails.services, reschedulingBookingId },
+                });
+              }}
+              disabled={salon.is_emergency_mode === true}
+              className="rounded-2xl bg-primary px-8 py-3 text-sm font-semibold text-primary-foreground transition-transform active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Book Now
+              {salon.is_emergency_mode ? "Closed" : "Book Now"}
             </button>
           </div>
         </motion.div>

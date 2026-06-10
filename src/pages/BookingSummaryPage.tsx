@@ -72,7 +72,7 @@ const BookingSummaryPage = () => {
     if (!type || type === 'none') return 0;
     if (type === 'all_days') return offer.all_days_percentage || 0;
     if (type === "specific_day") {
-      const selectedDateStr = selectedDay.toISOString().split("T")[0];
+      const selectedDateStr = new Date(selectedDay.getTime() - selectedDay.getTimezoneOffset() * 60000).toISOString().split("T")[0];
       if (offer.specific_day_date === selectedDateStr) return offer.specific_day_percentage || 0;
     } else if (type === "weekday_weekend") {
       const day = selectedDay.getDay();
@@ -108,7 +108,7 @@ const BookingSummaryPage = () => {
       body: {
         userId,
         salonId: salon.id,
-        bookingDate: selectedDay.toISOString().split("T")[0],
+        bookingDate: new Date(selectedDay.getTime() - selectedDay.getTimezoneOffset() * 60000).toISOString().split("T")[0],
         bookingTime: selectedSlot,
         status,
         paymentMethod,
@@ -370,7 +370,7 @@ const BookingSummaryPage = () => {
       return;
     }
 
-    const newDateStr = selectedDay.toISOString().split("T")[0];
+    const newDateStr = new Date(selectedDay.getTime() - selectedDay.getTimezoneOffset() * 60000).toISOString().split("T")[0];
     const newTimeStr = selectedSlot;
     const formattedTime = formatSlotLabel(newTimeStr);
     const serviceNames = selectedServices.map((s: any) => s.name).join(", ");

@@ -54,8 +54,11 @@ export function generateTimeSlots(date: Date, totalDuration: number, openTimeStr
     if (h >= 16) period = "Evening"; // 4 PM onwards
     else if (h >= 12) period = "Noon";
 
-    const slotEndMinutes = m + totalDuration + BUFFER_TIME;
-    let available = slotEndMinutes <= closeMinutes;
+    // The 'totalDuration' passed here is actually totalWithBuffer (service duration + BUFFER_TIME).
+    // The buffer time is rest time, so it doesn't need to fit within the salon's closing time.
+    // We just need the actual service to finish by closing time.
+    const actualDuration = totalDuration > BUFFER_TIME ? totalDuration - BUFFER_TIME : totalDuration;
+    let available = (m + actualDuration) <= closeMinutes;
 
     if (isToday && m <= currentMinutes) {
       available = false; // block past slots

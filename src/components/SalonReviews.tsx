@@ -18,6 +18,7 @@ const SalonReviews = ({ salonId, reviews: initialReviews, rating, reviewCount }:
   const [comment, setComment] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("You");
+  const [displayCount, setDisplayCount] = useState(4);
 
   // Always fetch fresh reviews from DB on mount
   useEffect(() => {
@@ -181,7 +182,7 @@ const SalonReviews = ({ salonId, reviews: initialReviews, rating, reviewCount }:
 
       {/* Individual reviews */}
       <div className="space-y-3">
-        {reviews.map((review) => {
+        {reviews.slice(0, displayCount).map((review) => {
           const reviewerName = review.customers?.full_name || review.userName || "Anonymous";
           const reviewDate = review.created_at || review.date;
           return (
@@ -209,6 +210,14 @@ const SalonReviews = ({ salonId, reviews: initialReviews, rating, reviewCount }:
           );
         })}
       </div>
+      {reviews.length > displayCount && (
+        <button
+          onClick={() => setDisplayCount(prev => prev + 10)}
+          className="mt-4 w-full rounded-xl border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+        >
+          Show More
+        </button>
+      )}
     </div>
   );
 };

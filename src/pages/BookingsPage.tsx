@@ -392,12 +392,14 @@ const BookingsPage = () => {
                   </h4>
                   {activeTab === "cancelled" && (
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium ${
-                      b.cancelled_by === 'owner' || b.cancelled_by === 'emergency'
+                      b.cancelled_by === 'owner' || b.cancelled_by === 'emergency' || b.cancelled_by === 'admin'
                         ? 'bg-orange-500/15 text-orange-400'
                         : 'bg-muted text-muted-foreground'
                     }`}>
                       {b.cancelled_by === 'emergency'
                         ? '🚨 Emergency'
+                        : b.cancelled_by === 'admin'
+                        ? 'Admin Cancelled'
                         : b.cancelled_by === 'owner'
                         ? 'Salon Cancelled'
                         : b.cancel_reason
@@ -441,21 +443,25 @@ const BookingsPage = () => {
                   <div className="mt-2">
                     {refundBadge(b)}
 
-                    {(b.cancelled_by === 'owner' || b.cancelled_by === 'emergency') && b.refund_status === 'pending_choice' && (
+                    {(b.cancelled_by === 'owner' || b.cancelled_by === 'emergency' || b.cancelled_by === 'admin') && (!b.refund_status || b.refund_status === 'pending_choice') && (
                       <div className="mt-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
                         <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                           <AlertTriangle className="h-3.5 w-3.5 text-primary" />
-                          {b.cancelled_by === 'emergency' ? '🚨 Emergency Closure' : 'Cancelled by Salon'}
+                          {b.cancelled_by === 'emergency' ? '🚨 Emergency Closure' : b.cancelled_by === 'admin' ? 'Cancelled by Admin' : 'Cancelled by Salon'}
                         </p>
                         <p className="mt-1 text-[11px] text-muted-foreground">
-                          {b.cancelled_by === 'emergency'
-                            ? 'The salon had to close due to an emergency. You are eligible for a free reschedule or a full refund.'
-                            : 'This booking was cancelled by the salon. You are eligible for a free reschedule to another slot or a full refund.'}
+                          {b.payment_status === 'paid' && b.payment_method === 'razorpay'
+                            ? (b.cancelled_by === 'emergency'
+                              ? 'The salon had to close due to an emergency. You are eligible for a free reschedule or a full refund.'
+                              : 'This booking was cancelled. You are eligible for a free reschedule to another slot or a full refund.')
+                            : (b.cancelled_by === 'emergency'
+                              ? 'The salon had to close due to an emergency. You can reschedule your slot for free. For UPI/direct refunds, contact the salon.'
+                              : 'This booking was cancelled. You can reschedule your slot for free. For UPI/direct refunds, contact the salon.')}
                         </p>
                         <div className="mt-3 flex items-center gap-2">
                           <button
                             onClick={() => {
-                              navigate(`/booking/${b.salon_id}`, {
+                              navigate(`/salon/${b.salon_id}`, {
                                 state: {
                                   reschedulingBookingId: b.id,
                                   personCount: b.person_count || 1,
@@ -469,33 +475,35 @@ const BookingsPage = () => {
                             <RefreshCcw className="h-3 w-3" />
                             Reschedule Slot
                           </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                const confirmFullRefund = window.confirm("Are you sure you want to request a full refund?");
-                                if (!confirmFullRefund) return;
-                                
-                                const { data: refundRes, error: refundErr } = await supabase.functions.invoke("cancel-booking", {
-                                  body: {
-                                    booking_id: b.id,
-                                    action: 'customer_choose_refund'
-                                  }
-                                });
+                          {b.payment_status === 'paid' && b.payment_method === 'razorpay' && (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const confirmFullRefund = window.confirm("Are you sure you want to request a full refund?");
+                                  if (!confirmFullRefund) return;
+                                  
+                                  const { data: refundRes, error: refundErr } = await supabase.functions.invoke("cancel-booking", {
+                                    body: {
+                                      booking_id: b.id,
+                                      action: 'customer_choose_refund'
+                                    }
+                                  });
 
-                                if (refundErr || !refundRes?.success) {
-                                  toast.error(refundRes?.error || refundErr?.message || "Failed to process refund");
-                                } else {
-                                  toast.success(`Full refund of ₹${refundRes.refund_amount} initiated!`);
-                                  fetchBookings();
+                                  if (refundErr || !refundRes?.success) {
+                                    toast.error(refundRes?.error || refundErr?.message || "Failed to process refund");
+                                  } else {
+                                    toast.success(`Full refund of ₹${refundRes.refund_amount} initiated!`);
+                                    fetchBookings();
+                                  }
+                                } catch (err: any) {
+                                  toast.error("Error processing refund");
                                 }
-                              } catch (err: any) {
-                                toast.error("Error processing refund");
-                              }
-                            }}
-                            className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all active:scale-[0.97]"
-                          >
-                            Get Full Refund
-                          </button>
+                              }}
+                              className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all active:scale-[0.97]"
+                            >
+                              Get Full Refund
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
