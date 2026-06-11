@@ -33,7 +33,7 @@ const ConfirmationPage = () => {
         .from("salons")
         .select("*")
         .eq("id", id)
-        .single();
+        .maybeSingle();
       setSalon(data);
     };
     if (id) fetchSalon();

@@ -67,7 +67,7 @@ const SalonReviews = ({ salonId, reviews: initialReviews, rating, reviewCount }:
       customer_id: userId,
       rating: newRating,
       comment: trimmed
-    }).select('*, customers(full_name)').single();
+    }).select('*, customers(full_name)').maybeSingle();
 
     if (error) {
       toast.error("Failed to submit review");

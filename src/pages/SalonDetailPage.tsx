@@ -27,7 +27,7 @@ const SalonDetailPage = () => {
       .from("salons")
       .select("*, services(*)")
       .eq("id", salonId)
-      .single();
+      .maybeSingle();
 
     // Fetch offers separately
     const { data: offersData } = await supabase

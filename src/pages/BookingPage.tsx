@@ -25,7 +25,7 @@ const BookingPage = () => {
         .from("salons")
         .select("*")
         .eq("id", id)
-        .single();
+        .maybeSingle();
       const { data: offersData } = await supabase
         .from("salon_offers")
         .select("*")

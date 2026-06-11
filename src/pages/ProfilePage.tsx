@@ -43,7 +43,7 @@ const ProfilePage = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
-        const { data } = await supabase.from("customers").select("*").eq("id", user.id).single();
+        const { data } = await supabase.from("customers").select("full_name, email, phone, avatar_url").eq("id", user.id).maybeSingle();
         if (data) {
           setName(data.full_name || "");
           setEmail(data.email || "");

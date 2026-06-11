@@ -45,7 +45,7 @@ const BookingSummaryPage = () => {
         .from("salons")
         .select("*")
         .eq("id", id)
-        .single();
+        .maybeSingle();
 
       const { data: offersData } = await supabase
         .from("salon_offers")
@@ -96,14 +96,14 @@ const BookingSummaryPage = () => {
   };
 
   const insertBooking = async (userId: string, paymentMethod: string, status: string, paymentStatus: string, rzpPaymentId?: string) => {
-    // Fetch customer details to get name
-    const { data: customerData } = await supabase.from('customers').select('full_name').eq('id', userId).maybeSingle();
+    // Fetch customer details to get name and phone
+    const { data: customerData } = await supabase.from('customers').select('full_name, phone').eq('id', userId).maybeSingle();
     const { data: { user } } = await supabase.auth.getUser();
     const customerName = customerData?.full_name || user?.user_metadata?.full_name || 'Customer';
-
     const serviceNames = selectedServices.map((s: any) => s.name).join(", ");
 
-    // Use the edge function to bypass RLS - it runs with service role permissions
+    // Use the dedicated create-booking edge function (runs with service role — bypasses RLS)
+    // Returns: { success: true, data: { id: '...', ...booking } }
     const { data: result, error: fnError } = await supabase.functions.invoke('create-booking', {
       body: {
         userId,
@@ -128,12 +128,18 @@ const BookingSummaryPage = () => {
       }
     });
 
-    if (fnError || !result?.success) {
-      const errMsg = result?.error || fnError?.message || 'Booking creation failed';
-      console.error('create-booking error:', errMsg);
+    if (fnError) {
+      console.error('create-booking function error:', fnError.message);
+      return { data: null, error: { message: fnError.message } };
+    }
+
+    if (!result?.success) {
+      const errMsg = result?.error || 'Booking creation failed';
+      console.error('create-booking returned failure:', errMsg);
       return { data: null, error: { message: errMsg } };
     }
 
+    // result.data is the booking object { id: '...', ... }
     return { data: result.data, error: null };
   };
 
@@ -142,6 +148,25 @@ const BookingSummaryPage = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast.error("You must be logged in to book");
+      return;
+    }
+
+    // ── Check profile completeness before allowing booking ──
+    const { data: customerProfile } = await supabase
+      .from('customers')
+      .select('full_name, phone')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (!customerProfile?.full_name) {
+      toast.error("Please complete your profile before booking.", {
+        duration: 5000,
+        description: "Your name and details are required to confirm a booking.",
+        action: {
+          label: "Complete Profile",
+          onClick: () => navigate("/profile-setup"),
+        },
+      });
       return;
     }
 
@@ -389,7 +414,7 @@ const BookingSummaryPage = () => {
         .from('salons')
         .select('owner_id, name')
         .eq('id', salon.id)
-        .single();
+        .maybeSingle();
 
       // 3. Update the booking via admin-api proxy
       const { data: updateRes, error: updateErr } = await supabase.functions.invoke("admin-api", {
