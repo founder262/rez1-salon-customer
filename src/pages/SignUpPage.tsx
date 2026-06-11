@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import Logomark from "@/components/Logo";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { LegalConsent } from "@/components/LegalConsent";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -14,30 +14,40 @@ const SignUpPage = () => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [phone, setPhone] = useState("");
-  
+
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  
+
   const [loading, setLoading] = useState(false);
   const [isConsented, setIsConsented] = useState(false);
-  const [errors, setErrors] = useState<{ general?: string }>({});
 
-  const validate = () => {
+  const validate = (): string | null => {
     if (!fullName.trim()) return "Full name is required";
     if (!email.trim() || !email.includes("@")) return "Valid email is required";
     if (password.length < 6) return "Password must be at least 6 characters";
     if (password !== confirmPassword) return "Passwords do not match";
-    if (phone.length < 10) return "Valid phone number is required";
+    if (phone.replace(/\D/g, "").length < 10) return "Valid phone number is required";
     return null;
   };
 
-  const handleSignUp = async () => {
-    const errorMsg = validate();
-    if (errorMsg) {
-      toast.error(errorMsg);
+  const handleSignUp = async (e: FormEvent) => {
+    e.preventDefault();
+
+    // Terms & Conditions validation
+    if (!isConsented) {
+      toast.warning("Please accept the Terms & Conditions and Privacy Policy before continuing.", {
+        duration: 4000,
+        position: "bottom-center",
+      });
       return;
     }
-    
+
+    const errorMsg = validate();
+    if (errorMsg) {
+      toast.error(errorMsg, { position: "bottom-center" });
+      return;
+    }
+
     setLoading(true);
 
     const { data, error } = await supabase.auth.signUp({
@@ -46,44 +56,71 @@ const SignUpPage = () => {
       options: {
         data: {
           full_name: fullName.trim(),
-          phone: phone.trim()
-        }
-      }
+          phone: phone.trim(),
+        },
+      },
     });
 
     if (error) {
-      toast.error(error.message);
-      setErrors({ general: error.message });
+      let userMessage = error.message;
+      if (error.message.toLowerCase().includes("already registered") || error.message.toLowerCase().includes("already exists")) {
+        userMessage = "An account with this email already exists. Please sign in instead.";
+      } else if (error.message.toLowerCase().includes("weak password") || error.message.toLowerCase().includes("password")) {
+        userMessage = "Password is too weak. Please use at least 8 characters with letters and numbers.";
+      } else if (error.message.toLowerCase().includes("invalid email")) {
+        userMessage = "Please enter a valid email address.";
+      } else if (error.message.toLowerCase().includes("network") || error.message.toLowerCase().includes("fetch")) {
+        userMessage = "Network error. Please check your internet connection and try again.";
+      }
+      toast.error(userMessage, { position: "bottom-center" });
       setLoading(false);
       return;
     }
 
     if (data.user) {
       if (!data.session) {
-        // Email confirmations are enabled and the user needs to verify their email
-        toast.success("Please check your email to verify your account before logging in!");
+        // Email confirmation is enabled — user must verify email before logging in
+        toast.success(
+          "A confirmation email has been sent to your registered email address. Please verify your email before signing in.",
+          {
+            duration: 7000,
+            position: "bottom-center",
+            description: "Check your inbox and spam folder.",
+          }
+        );
         navigate("/login");
       } else {
-        // Email confirmations are disabled, session is available
-        toast.success("Account created successfully!");
-        await supabase.from("customers").upsert({ 
-          id: data.user.id, 
-          email: email.trim(),
-          full_name: fullName.trim(),
-          phone: phone.trim()
-        }, { onConflict: "id" });
+        // Email confirmations are disabled — session available immediately
+        await supabase.from("customers").upsert(
+          {
+            id: data.user.id,
+            email: email.trim(),
+            full_name: fullName.trim(),
+            phone: phone.trim(),
+          },
+          { onConflict: "id" }
+        );
+        toast.success("Account created successfully!", { position: "bottom-center" });
         navigate("/profile-setup");
       }
     }
+
     setLoading(false);
   };
 
   const handleGoogleSignIn = async () => {
+    if (!isConsented) {
+      toast.warning("Please accept the Terms & Conditions and Privacy Policy before continuing.", {
+        duration: 4000,
+        position: "bottom-center",
+      });
+      return;
+    }
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/home`
-      }
+        redirectTo: `${window.location.origin}/home`,
+      },
     });
   };
 
@@ -105,9 +142,9 @@ const SignUpPage = () => {
         </div>
 
         <button
+          type="button"
           onClick={handleGoogleSignIn}
-          disabled={!isConsented}
-          className="flex w-full items-center justify-center gap-3 rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] py-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#1A1A1F] disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-3 rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] py-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#1A1A1F]"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -125,7 +162,7 @@ const SignUpPage = () => {
         </div>
 
         {/* Form */}
-        <div className="flex w-full flex-col gap-5">
+        <form onSubmit={handleSignUp} className="flex w-full flex-col gap-5" noValidate>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-bold text-white">Full Name</label>
             <input
@@ -133,6 +170,7 @@ const SignUpPage = () => {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Your full name"
+              autoComplete="name"
               className="w-full rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] px-4 py-3 text-sm text-white outline-none placeholder:text-[#444] focus:border-[#B8860B] transition-colors"
             />
           </div>
@@ -144,6 +182,7 @@ const SignUpPage = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@example.com"
+              autoComplete="email"
               className="w-full rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] px-4 py-3 text-sm text-white outline-none placeholder:text-[#444] focus:border-[#B8860B] transition-colors"
             />
           </div>
@@ -155,9 +194,11 @@ const SignUpPage = () => {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                autoComplete="new-password"
                 className="w-full rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] pl-4 pr-11 py-3 text-sm text-white outline-none placeholder:text-[#444] focus:border-[#B8860B] transition-colors"
               />
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-[#666] hover:text-[#999]"
@@ -174,9 +215,11 @@ const SignUpPage = () => {
                 type={showConfirmPassword ? "text" : "password"}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your password"
+                autoComplete="new-password"
                 className="w-full rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] pl-4 pr-11 py-3 text-sm text-white outline-none placeholder:text-[#444] focus:border-[#B8860B] transition-colors"
               />
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-[#666] hover:text-[#999]"
@@ -193,21 +236,34 @@ const SignUpPage = () => {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+91 XXXXX XXXXX"
+              autoComplete="tel"
               className="w-full rounded-2xl border border-[#1A1A1F] bg-[#0A0A0F] px-4 py-3 text-sm text-white outline-none placeholder:text-[#444] focus:border-[#B8860B] transition-colors"
             />
           </div>
 
-          {errors.general && <p className="text-center text-xs text-destructive mt-2">{errors.general}</p>}
-
           <button
-            onClick={handleSignUp}
-            disabled={loading || !isConsented}
-            className="mt-6 h-14 w-full rounded-2xl bg-[#615222] hover:bg-[#726128] text-sm font-semibold text-[#CCC] transition-colors disabled:opacity-50"
+            type="submit"
+            id="signup-submit-btn"
+            disabled={loading}
+            className="mt-6 h-14 w-full rounded-2xl bg-[#615222] hover:bg-[#726128] text-sm font-semibold text-[#CCC] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
           >
-            {loading ? "Signing up..." : "Sign up"}
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Creating Account...
+              </>
+            ) : (
+              "Sign up"
+            )}
           </button>
-        </div>
 
+          <p className="text-center text-sm text-[#888]">
+            Already have an account?{" "}
+            <Link to="/login" className="font-bold text-[#B8860B] hover:text-[#F5D07A] transition-colors">
+              Sign In
+            </Link>
+          </p>
+        </form>
       </motion.div>
     </div>
   );

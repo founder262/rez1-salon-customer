@@ -38,37 +38,70 @@ const HomePage = () => {
       if (user) {
         const { data: customer, error: customerErr } = await supabase
           .from("customers")
-          .select("preferred_location_id, profile_completed")
+          .select("preferred_location_id, full_name")
           .eq("id", user.id)
           .maybeSingle();
 
-        // Only act on customer data if the query succeeded
         if (!customerErr) {
-          if (customer && customer.profile_completed === false) {
+          if (customer && !customer.full_name) {
             navigate("/profile-setup");
             return;
           }
 
-          if (customer?.preferred_location_id) {
-            locId = customer.preferred_location_id;
-            // Fetch location name separately to avoid PostgREST implicit join (requires named FK)
+          // Use DB preferred location if set, otherwise fall back to localStorage
+          const candidateId = customer?.preferred_location_id || locId;
+
+          if (candidateId) {
+            // ✅ Validate: check this location actually exists in the locations table
             const { data: locationData } = await supabase
               .from("locations")
-              .select("name")
-              .eq("id", customer.preferred_location_id)
+              .select("id, name")
+              .eq("id", candidateId)
+              .eq("is_active", true)
               .maybeSingle();
-            locName = locationData?.name || locName;
+
+            if (locationData) {
+              // Location is valid — use it
+              locId = locationData.id;
+              locName = locationData.name;
+              localStorage.setItem("rez1_location_id", locId);
+              localStorage.setItem("rez1_location_name", locName);
+            } else {
+              // Location no longer exists in DB — clear stale data everywhere
+              locId = "";
+              locName = "";
+              localStorage.removeItem("rez1_location_id");
+              localStorage.removeItem("rez1_location_name");
+              // Also clear from customer DB record so it doesn't keep being read
+              if (user && customer?.preferred_location_id) {
+                await supabase
+                  .from("customers")
+                  .update({ preferred_location_id: null })
+                  .eq("id", user.id);
+              }
+            }
           }
         } else {
           console.warn("Could not fetch customer profile, falling back to localStorage:", customerErr.message);
+          // Even for localStorage fallback, validate the ID
+          if (locId) {
+            const { data: locationData } = await supabase
+              .from("locations")
+              .select("id, name")
+              .eq("id", locId)
+              .eq("is_active", true)
+              .maybeSingle();
+            if (!locationData) {
+              locId = "";
+              locName = "";
+              localStorage.removeItem("rez1_location_id");
+              localStorage.removeItem("rez1_location_name");
+            }
+          }
         }
       }
 
-      if (!locId) {
-        // No location set — go pick one
-        navigate("/location");
-        return;
-      }
+      // Show all salons if no valid location found
       setSelectedLocationId(locId);
       setSelectedLocationName(locName);
     };
@@ -76,7 +109,6 @@ const HomePage = () => {
   }, []);
 
   const fetchSalons = async () => {
-    if (!selectedLocationId) return;
     let q = supabase
       .from("salons")
       .select("id, name, salon_images, categories, rating, review_count, address, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration)")
@@ -85,12 +117,14 @@ const HomePage = () => {
       .eq("is_approved", true)
       .order("rating", { ascending: false });
 
-    // If searching by salon name, do NOT filter by location so they can see all branches
+    // If searching by salon name, do NOT filter by location
     if (query && searchMode === "salon") {
       q = q.ilike("name", `%${query}%`);
-    } else {
+    } else if (selectedLocationId) {
+      // Only filter by location if one is selected
       q = q.eq("location_id", selectedLocationId);
     }
+    // If no location selected, show all salons
 
     if (categoryFilter !== "All") q = q.contains("categories", [categoryFilter]);
 
@@ -113,7 +147,6 @@ const HomePage = () => {
 
   // Fetch salons whenever location / filters change
   useEffect(() => {
-    if (!selectedLocationId) return;
     fetchSalons();
   }, [selectedLocationId, categoryFilter, query, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -178,25 +211,25 @@ const HomePage = () => {
         <PromoBanner banners={banners} />
 
         {/* Selected Area Indicator */}
-        {selectedLocationName && (
-          <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-                <MapPin className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Showing salons in & around</p>
-                <p className="text-sm font-bold text-foreground">{selectedLocationName}, Chennai</p>
-              </div>
+        <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+              <MapPin className="h-5 w-5 text-primary" />
             </div>
-            <button 
-              onClick={() => navigate("/location")}
-              className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
-            >
-              Change
-            </button>
+            <div>
+              <p className="text-xs text-muted-foreground">Showing salons in & around</p>
+              <p className="text-sm font-bold text-foreground">
+                {selectedLocationName || "All Areas"}
+              </p>
+            </div>
           </div>
-        )}
+          <button 
+            onClick={() => navigate("/location")}
+            className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+          >
+            {selectedLocationName ? "Change" : "Set Location"}
+          </button>
+        </div>
 
         {/* Category Filter */}
         <div className="mb-4 flex gap-2 overflow-x-auto pb-2 scrollbar-none">

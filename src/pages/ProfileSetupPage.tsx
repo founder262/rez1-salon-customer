@@ -43,7 +43,6 @@ const ProfileSetupPage = () => {
       phone: phone.trim(),
       date_of_birth: dob || null,
       gender: gender || null,
-      profile_completed: true,
     }).eq("id", user.id);
 
     if (error) {
