@@ -153,7 +153,7 @@ export const LegalConsent = ({ onConsentChange }: LegalConsentProps) => {
 
                   <div>
                     <h3 className="font-bold text-white mb-2">11. CONTACT</h3>
-                    <p>Email: support@rez1.in<br/>Website: www.rez1.in</p>
+                    <p>Email: contact@rez1.in<br/>Website: www.rez1.in</p>
                   </div>
 
                   <p className="font-bold text-[#B8860B] pt-4">By using REZ1, you agree to these terms.</p>
@@ -279,7 +279,7 @@ export const LegalConsent = ({ onConsentChange }: LegalConsentProps) => {
 
                   <div>
                     <h3 className="font-bold text-white mb-2">13. CONTACT</h3>
-                    <p>Email: support@rez1.in<br/>Website: www.rez1.in</p>
+                    <p>Email: contact@rez1.in<br/>Website: www.rez1.in</p>
                   </div>
 
                   <p className="font-bold text-[#B8860B] pt-4">By using REZ1, you agree to this Privacy Policy.</p>

@@ -43,12 +43,14 @@ const ProfilePage = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
-        const { data } = await supabase.from("customers").select("full_name, email, phone, avatar_url").eq("id", user.id).maybeSingle();
+        const { data } = await supabase.from("customers").select("full_name, email, phone, avatar_url, reward_points").eq("id", user.id).maybeSingle();
         if (data) {
           setName(data.full_name || "");
           setEmail(data.email || "");
           setPhone(data.phone || user.phone || "");
           setAvatarUrl(data.avatar_url || "");
+          // Set reward points directly from DB
+          setStats(prev => ({ ...prev, points: data.reward_points || 0 }));
         }
       }
     };
@@ -141,9 +143,16 @@ const ProfilePage = () => {
         .select("*", { count: "exact", head: true })
         .eq("customer_id", userId);
 
+      // Fetch actual reward_points from customers table
+      const { data: customerData } = await supabase
+        .from("customers")
+        .select("reward_points")
+        .eq("id", userId)
+        .maybeSingle();
+
       setStats({
         bookings: bookingCount || 0,
-        points: (bookingCount || 0) * 50, // 50 points per booking
+        points: customerData?.reward_points || 0,  // ✅ Real points from DB
         reviews: reviewCount || 0
       });
     };
@@ -247,7 +256,7 @@ const ProfilePage = () => {
       </motion.div>
 
       {/* Stats Row */}
-      <motion.div variants={itemVariants} className="mb-8 grid grid-cols-3 gap-3">
+      <motion.div variants={itemVariants} className="mb-4 grid grid-cols-3 gap-3">
         {[
           { label: "Bookings", value: stats.bookings, icon: Calendar },
           { label: "Points", value: stats.points, icon: Star },
@@ -261,6 +270,38 @@ const ProfilePage = () => {
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{stat.label}</span>
           </div>
         ))}
+      </motion.div>
+
+      {/* Reward Points Status Card */}
+      <motion.div variants={itemVariants} className="mb-8">
+        <div className={`rounded-2xl border p-4 ${stats.points >= 100 ? 'border-primary/30 bg-primary/5' : 'border-border bg-muted/30'}`}>
+          <div className="flex items-center gap-3">
+            <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${stats.points >= 100 ? 'bg-primary/15' : 'bg-muted/50'}`}>
+              <Star className={`h-5 w-5 ${stats.points >= 100 ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+            </div>
+            <div className="flex-1">
+              <p className="text-lg font-bold text-foreground">
+                {stats.points} Points
+              </p>
+              <p className="text-sm font-bold text-foreground mt-1">
+                {stats.points >= 100
+                  ? `✓ Eligible for Reward Redemption`
+                  : `Need ${100 - stats.points} more points to unlock reward redemption.`}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Use points only when you reach a minimum of 100 points.
+              </p>
+            </div>
+          </div>
+          {stats.points > 0 && stats.points < 100 && (
+            <div className="mt-3 h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary/60 transition-all duration-500"
+                style={{ width: `${Math.min(100, (stats.points / 100) * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
       </motion.div>
 
       {/* Menu Sections */}
@@ -603,17 +644,37 @@ const ProfilePage = () => {
             onClick={async () => {
               if (!helpQuery.trim() || !helpName.trim() || !helpEmail.trim()) return;
               setIsSubmittingHelp(true);
-              // Store as contact request in actual db ideally, mocked for now
-              setTimeout(() => {
-                setIsSubmittingHelp(false);
+              try {
+                const { data, error } = await supabase.functions.invoke("send-support-email", {
+                  body: {
+                    name: helpName,
+                    email: helpEmail,
+                    phone: helpPhone,
+                    message: helpQuery,
+                    source: "customer_help_center"
+                  }
+                });
+                if (error || !data?.success) throw new Error(data?.error || error?.message || "Failed to send");
                 setHelpSuccess(true);
-              }, 1000);
+              } catch (err: any) {
+                // Fallback: open mailto link with contact@rez1.in
+                const subject = encodeURIComponent("Help Request from " + helpName);
+                const body = encodeURIComponent(`Name: ${helpName}\nEmail: ${helpEmail}\nPhone: ${helpPhone}\n\nQuery:\n${helpQuery}`);
+                window.location.href = `mailto:contact@rez1.in?subject=${subject}&body=${body}`;
+                setHelpSuccess(true);
+              } finally {
+                setIsSubmittingHelp(false);
+              }
             }}
             disabled={isSubmittingHelp || !helpQuery.trim() || !helpName.trim() || !helpEmail.trim()}
             className="w-full mt-6 rounded-2xl bg-primary py-4 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50"
           >
             {isSubmittingHelp ? "Submitting..." : "Submit Query"}
           </button>
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Or email us directly at{" "}
+            <a href="mailto:contact@rez1.in" className="text-primary font-semibold">contact@rez1.in</a>
+          </p>
         </div>
       )}
     </motion.div>

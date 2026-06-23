@@ -121,6 +121,8 @@ const BookingsPage = () => {
     setIsCancelling(true);
 
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+
       const { data, error } = await supabase.functions.invoke("cancel-booking", {
         body: {
           booking_id: cancelTarget.id,
@@ -141,6 +143,46 @@ const BookingsPage = () => {
         );
       } else {
         toast.success("Booking cancelled successfully.");
+      }
+
+      // \u2500\u2500 DEDUCT 10 POINTS FOR CANCELLATION (safe deduction, min 0) \u2500\u2500
+      if (user) {
+        try {
+          const { data: customerData } = await supabase
+            .from("customers")
+            .select("reward_points")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          const currentPoints = customerData?.reward_points || 0;
+          if (currentPoints > 0) {
+            const newPoints = Math.max(0, currentPoints - 10);
+            const pointsToDeduct = Math.min(10, currentPoints);
+
+            await supabase
+              .from("customers")
+              .update({ reward_points: newPoints })
+              .eq("id", user.id);
+
+            // Record transaction (non-blocking)
+            await supabase.functions.invoke("admin-api", {
+              body: {
+                action: "INSERT",
+                table: "reward_transactions",
+                data: {
+                  user_id: user.id,
+                  points: -pointsToDeduct,
+                  transaction_type: "Booking Cancelled",
+                  description: "10 points deducted for booking cancellation",
+                  booking_id: cancelTarget.id,
+                  created_at: new Date().toISOString(),
+                }
+              }
+            });
+          }
+        } catch (ptErr) {
+          console.warn("Points deduction on cancellation failed (non-blocking):", ptErr);
+        }
       }
 
       setCancelTarget(null);

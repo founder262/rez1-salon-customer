@@ -26,8 +26,6 @@ const HomePage = () => {
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [selectedLocationName, setSelectedLocationName] = useState("");
 
-
-
   // Load location from customer profile
   useEffect(() => {
     const init = async () => {
@@ -48,11 +46,9 @@ const HomePage = () => {
             return;
           }
 
-          // Use DB preferred location if set, otherwise fall back to localStorage
           const candidateId = customer?.preferred_location_id || locId;
 
           if (candidateId) {
-            // ✅ Validate: check this location actually exists in the locations table
             const { data: locationData } = await supabase
               .from("locations")
               .select("id, name")
@@ -61,18 +57,15 @@ const HomePage = () => {
               .maybeSingle();
 
             if (locationData) {
-              // Location is valid — use it
               locId = locationData.id;
               locName = locationData.name;
               localStorage.setItem("rez1_location_id", locId);
               localStorage.setItem("rez1_location_name", locName);
             } else {
-              // Location no longer exists in DB — clear stale data everywhere
               locId = "";
               locName = "";
               localStorage.removeItem("rez1_location_id");
               localStorage.removeItem("rez1_location_name");
-              // Also clear from customer DB record so it doesn't keep being read
               if (user && customer?.preferred_location_id) {
                 await supabase
                   .from("customers")
@@ -83,7 +76,6 @@ const HomePage = () => {
           }
         } else {
           console.warn("Could not fetch customer profile, falling back to localStorage:", customerErr.message);
-          // Even for localStorage fallback, validate the ID
           if (locId) {
             const { data: locationData } = await supabase
               .from("locations")
@@ -101,7 +93,6 @@ const HomePage = () => {
         }
       }
 
-      // Show all salons if no valid location found
       setSelectedLocationId(locId);
       setSelectedLocationName(locName);
     };
@@ -109,28 +100,76 @@ const HomePage = () => {
   }, []);
 
   const fetchSalons = async () => {
+    // Fetch all approved/visible salons — category & search filtering done client-side
+    // for maximum flexibility (unisex logic, multi-field search, service name search)
     let q = supabase
       .from("salons")
-      .select("id, name, salon_images, categories, rating, review_count, address, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration)")
+      .select("id, name, owner_name, salon_images, categories, rating, review_count, address, city, area, locality, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration, category), locations(name)")
       .eq("is_suspended", false)
       .eq("is_visible", true)
       .eq("is_approved", true)
       .order("rating", { ascending: false });
 
-    // If searching by salon name, do NOT filter by location
-    if (query && searchMode === "salon") {
-      q = q.ilike("name", `%${query}%`);
-    } else if (selectedLocationId) {
-      // Only filter by location if one is selected
+    // Only apply location filter when no search query is active
+    if (!query && selectedLocationId) {
       q = q.eq("location_id", selectedLocationId);
     }
-    // If no location selected, show all salons
-
-    if (categoryFilter !== "All") q = q.contains("categories", [categoryFilter]);
 
     const { data, error } = await q;
     if (error) console.error("fetchSalons error:", error);
-    setSalons(data || []);
+
+    let result = data || [];
+
+    // ── UNISEX CATEGORY FILTER (client-side) ──
+    // Men    → show Men OR Unisex salons
+    // Women  → show Women OR Unisex salons
+    // Unisex/Pets/Bridal → exact match only
+    if (categoryFilter !== "All") {
+      result = result.filter((salon: any) => {
+        const rawCats = salon.categories || (salon.category ? [salon.category] : []);
+        const cats: string[] = (Array.isArray(rawCats) ? rawCats : [rawCats])
+          .filter(Boolean)
+          .map((c: any) => String(c).toLowerCase());
+        const filterLower = categoryFilter.toLowerCase();
+        if (filterLower === "men") return cats.includes("men") || cats.includes("unisex");
+        if (filterLower === "women") return cats.includes("women") || cats.includes("unisex");
+        return cats.includes(filterLower);
+      });
+    }
+
+    // ── MULTI-FIELD SEARCH (client-side, case-insensitive, partial + service matching) ──
+    if (query.trim()) {
+      const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      result = result.filter((salon: any) => {
+        const serviceNames = (salon.services || []).map((s: any) => s.name || "").join(" ");
+        const serviceCategories = (salon.services || []).map((s: any) => s.category || "").join(" ");
+        
+        let locationName = "";
+        if (salon.locations) {
+          if (Array.isArray(salon.locations)) {
+            locationName = salon.locations.map((l: any) => l.name || "").join(" ");
+          } else if (typeof salon.locations === 'object') {
+            locationName = salon.locations.name || "";
+          }
+        }
+
+        const corpus = [
+          salon.name || "",
+          salon.owner_name || "",
+          salon.address || "",
+          salon.city || "",
+          salon.area || "",
+          salon.locality || "",
+          locationName,
+          serviceNames,
+          serviceCategories,
+        ].join(" ").toLowerCase();
+        // All terms must match (AND logic across search words)
+        return terms.every((term) => corpus.includes(term));
+      });
+    }
+
+    setSalons(result);
   };
 
   const fetchBanners = async () => {
@@ -145,26 +184,26 @@ const HomePage = () => {
     setBanners(validBanners);
   };
 
-  // Fetch salons whenever location / filters change
+  // Fetch salons whenever location / filters / search change
   useEffect(() => {
     fetchSalons();
   }, [selectedLocationId, categoryFilter, query, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch banners once on mount (they don't depend on location/filters)
+  // Fetch banners once on mount
   useEffect(() => {
     fetchBanners();
   }, []);
 
-  // Real-time listener for services changes to update salon lists dynamically
+  // Real-time listener for services changes
   useEffect(() => {
     const channel = supabase
       .channel('home-services-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => {
-        if (selectedLocationId) fetchSalons();
+        fetchSalons();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [selectedLocationId, categoryFilter, query, searchMode]);
+  }, [selectedLocationId, categoryFilter, query, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-[100dvh] bg-background safe-bottom">
@@ -210,25 +249,36 @@ const HomePage = () => {
         {/* Advertisement Banner */}
         <PromoBanner banners={banners} />
 
-        {/* Selected Area Indicator */}
+        {/* Selected Area / Search Indicator */}
         <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
               <MapPin className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Showing salons in & around</p>
+              <p className="text-xs text-muted-foreground">
+                {query ? "Search results for" : "Showing salons in & around"}
+              </p>
               <p className="text-sm font-bold text-foreground">
-                {selectedLocationName || "All Areas"}
+                {query ? `"${query}"` : (selectedLocationName || "All Areas")}
               </p>
             </div>
           </div>
-          <button 
-            onClick={() => navigate("/location")}
-            className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
-          >
-            {selectedLocationName ? "Change" : "Set Location"}
-          </button>
+          {query ? (
+            <button
+              onClick={() => setQuery("")}
+              className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-destructive/20"
+            >
+              Clear
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate("/location")}
+              className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+            >
+              {selectedLocationName ? "Change" : "Set Location"}
+            </button>
+          )}
         </div>
 
         {/* Category Filter */}
@@ -251,7 +301,7 @@ const HomePage = () => {
         {/* Results info */}
         {query && (
           <p className="mb-3 text-xs text-muted-foreground">
-            {salons.length} salon{salons.length !== 1 ? "s" : ""} found
+            {salons.length} salon{salons.length !== 1 ? "s" : ""} found for "{query}"
           </p>
         )}
 
@@ -264,16 +314,18 @@ const HomePage = () => {
               </div>
               <h4 className="font-display text-lg font-bold text-foreground">No salons found</h4>
               <p className="mt-2 max-w-[240px] text-sm text-muted-foreground">
-                {categoryFilter !== "All"
+                {query
+                  ? `No salons match "${query}". Try a different keyword.`
+                  : categoryFilter !== "All"
                   ? `No ${categoryFilter} salons available in this area yet.`
                   : "No salons are currently available in this area."}
               </p>
-              {categoryFilter !== "All" && (
+              {(query || categoryFilter !== "All") && (
                 <button
-                  onClick={() => setCategoryFilter("All")}
+                  onClick={() => { setQuery(""); setCategoryFilter("All"); }}
                   className="mt-4 rounded-xl bg-primary px-6 py-2.5 text-xs font-bold text-primary-foreground"
                 >
-                  Show All Categories
+                  Clear All Filters
                 </button>
               )}
             </div>
@@ -307,13 +359,10 @@ const HomePage = () => {
               const openMins = parseTimeStr(salon.open_time || "10:00 AM");
 
               if (currentMins >= closeMins - 30) {
-                // Too late for today
                 nextAvailable = `Next: Tomorrow ${salon.open_time || "10:00 AM"}`;
               } else if (currentMins < openMins) {
-                // Before opening time today
                 nextAvailable = `Next: Today ${salon.open_time || "10:00 AM"}`;
               } else {
-                // Currently open, calculate the next upcoming 30-minute slot
                 const remainder = currentMins % 30;
                 const nextSlotMins = currentMins + (30 - remainder);
                 

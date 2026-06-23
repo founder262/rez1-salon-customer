@@ -31,6 +31,10 @@ const BookingSummaryPage = () => {
   const [showUpiModal, setShowUpiModal] = useState(false);
   const [originalBooking, setOriginalBooking] = useState<any>(null);
 
+  // ── REWARD POINTS STATE ──
+  const [customerPoints, setCustomerPoints] = useState(0);
+  const [usePoints, setUsePoints] = useState(false);
+
   useEffect(() => {
     if (state?.reschedulingBookingId) {
       supabase.from('bookings').select('*').eq('id', state.reschedulingBookingId).maybeSingle().then(({ data }) => {
@@ -59,6 +63,17 @@ const BookingSummaryPage = () => {
         .select("*")
         .maybeSingle();
       setPlatformConfig(configData);
+
+      // ── Fetch customer reward points ──
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: customerData } = await supabase
+          .from("customers")
+          .select("reward_points")
+          .eq("id", user.id)
+          .maybeSingle();
+        setCustomerPoints(customerData?.reward_points || 0);
+      }
     };
     if (id) fetchData();
   }, [id]);
@@ -85,7 +100,16 @@ const BookingSummaryPage = () => {
   const discountedPrice = salon ? Math.round(totalPrice * (1 - offerPercent / 100)) : totalPrice;
   const discountAmount = totalPrice - discountedPrice;
   const BOOKING_CHARGES = platformConfig?.booking_fee ?? 25;
-  const finalPayableAmount = discountedPrice + BOOKING_CHARGES;
+
+  // ── POINTS DISCOUNT CALCULATION ──
+  // Each 100 points = ₹100 discount. Only whole multiples of 100 allowed.
+  const totalCostBeforePoints = discountedPrice + BOOKING_CHARGES;
+  const maxPossibleDiscount = Math.floor(customerPoints / 100) * 100;
+  const maxAllowedDiscount = Math.floor(totalCostBeforePoints / 100) * 100;
+  const pointsDiscount = usePoints ? Math.min(maxPossibleDiscount, maxAllowedDiscount) : 0;
+  const pointsUsed = pointsDiscount; // 100 pts = ₹100, so pts used = discount amount
+
+  const finalPayableAmount = discountedPrice - pointsDiscount + BOOKING_CHARGES;
 
   const formatSlotLabel = (time: string) => {
     if (!time) return "";
@@ -307,6 +331,35 @@ const BookingSummaryPage = () => {
 
               // ── STEP 5: Payment Verified - Booking Confirmed ──
               toast.success("Payment verified! Booking confirmed.");
+
+              // ── DEDUCT POINTS IF USED ──
+              if (pointsUsed > 0) {
+                try {
+                  // Deduct points from customer
+                  await supabase
+                    .from("customers")
+                    .update({ reward_points: Math.max(0, customerPoints - pointsUsed) })
+                    .eq("id", user.id);
+                  // Record in reward_transactions
+                  await supabase.functions.invoke("admin-api", {
+                    body: {
+                      action: "INSERT",
+                      table: "reward_transactions",
+                      data: {
+                        user_id: user.id,
+                        points: -pointsUsed,
+                        transaction_type: "Points Redeemed",
+                        description: `Points redeemed at checkout for booking at ${salon?.name}`,
+                        booking_id: pendingBooking.id,
+                        created_at: new Date().toISOString(),
+                      }
+                    }
+                  });
+                } catch (ptErr) {
+                  console.warn("Points deduction failed (non-blocking):", ptErr);
+                }
+              }
+
               setIsProcessing(false);
               navigate(`/confirmation/${salon.id}`, {
                 state: {
@@ -379,6 +432,31 @@ const BookingSummaryPage = () => {
       toast.error("Failed to save booking. Please try again.");
       setIsProcessing(false);
     } else {
+      // ── DEDUCT POINTS IF USED (UPI flow) ──
+      if (pointsUsed > 0 && data) {
+        try {
+          await supabase
+            .from("customers")
+            .update({ reward_points: Math.max(0, customerPoints - pointsUsed) })
+            .eq("id", user.id);
+          await supabase.functions.invoke("admin-api", {
+            body: {
+              action: "INSERT",
+              table: "reward_transactions",
+              data: {
+                user_id: user.id,
+                points: -pointsUsed,
+                transaction_type: "Points Redeemed",
+                description: `Points redeemed at checkout for booking at ${salon?.name}`,
+                booking_id: data.id,
+                created_at: new Date().toISOString(),
+              }
+            }
+          });
+        } catch (ptErr) {
+          console.warn("Points deduction failed (non-blocking):", ptErr);
+        }
+      }
       toast.success("Booking Confirmed! Pending payment verification.");
       navigate(`/confirmation/${salon.id}`, { state: { booking: data, finalPayableAmount } });
     }
@@ -815,6 +893,43 @@ const BookingSummaryPage = () => {
                 <span>Final Salon Fee</span>
                 <span>₹{discountedPrice}</span>
               </div>
+
+              {/* REWARD POINTS TOGGLE — only shown outside rescheduling flow */}
+              {!state?.reschedulingBookingId && customerPoints >= 100 && (
+                <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-foreground">
+                      Reward Points Available: {customerPoints}
+                    </span>
+                    {usePoints && (
+                      <span className="text-xs text-green-600 dark:text-green-400 font-extrabold">
+                        −₹{pointsDiscount}
+                      </span>
+                    )}
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer mt-1">
+                    <input
+                      id="use-points"
+                      type="checkbox"
+                      checked={usePoints}
+                      onChange={(e) => setUsePoints(e.target.checked)}
+                      className="h-4 w-4 rounded border-border bg-card text-primary accent-primary cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-primary">
+                      Use Reward Points
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {/* Points discount line */}
+              {pointsDiscount > 0 && (
+                <div className="flex items-center justify-between text-xs font-bold text-green-600 dark:text-green-400">
+                  <span>Points Redeemed ({pointsUsed} pts)</span>
+                  <span>- ₹{pointsDiscount}</span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between border-t border-dashed border-border pt-3">
                 <span className="text-xs font-medium text-primary">Rez1 Booking Charges</span>
                 <span className="text-xs font-bold text-primary">₹{BOOKING_CHARGES}</span>
