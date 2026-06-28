@@ -10,12 +10,20 @@ const EntryPage = () => {
 
   // On mount: if user already has a valid session, skip splash and go home
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        console.error("Auth check error in EntryPage:", error);
+        if (error.message?.includes("Invalid Refresh Token") || error.message?.includes("Refresh Token Not Found") || error.status === 400) {
+          supabase.auth.signOut().catch(() => {});
+        }
+      }
+      if (data?.session) {
         navigate("/home", { replace: true });
       } else {
         setSessionChecked(true);
       }
+    }).catch(() => {
+      setSessionChecked(true);
     });
   }, [navigate]);
 

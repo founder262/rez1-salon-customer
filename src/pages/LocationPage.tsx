@@ -30,11 +30,16 @@ const LocationPage = () => {
     if (user) {
       await supabase
         .from("customers")
-        .update({ preferred_location_id: loc.id })
+        .update({ preferred_location_id: loc.id || null })
         .eq("id", user.id);
     }
-    localStorage.setItem("rez1_location_id", loc.id);
-    localStorage.setItem("rez1_location_name", loc.name);
+    if (loc.id) {
+      localStorage.setItem("rez1_location_id", loc.id);
+      localStorage.setItem("rez1_location_name", loc.name);
+    } else {
+      localStorage.removeItem("rez1_location_id");
+      localStorage.removeItem("rez1_location_name");
+    }
     navigate("/home");
   };
 
@@ -70,23 +75,37 @@ const LocationPage = () => {
               No service areas available yet.
             </div>
           ) : (
-            locations.map((area) => (
+            <>
               <button
-                key={area.id}
-                onClick={() => handleSelectArea(area)}
-                className="group rounded-2xl border border-border bg-card px-4 py-3.5 text-left transition-all hover:border-primary hover:bg-primary/5 active:scale-[0.97]"
+                onClick={() => handleSelectArea({ id: "", name: "All Areas", salons_count: 0 })}
+                className="col-span-2 group rounded-2xl border border-dashed border-primary/30 bg-card px-4 py-4 text-center transition-all hover:border-primary hover:bg-primary/5 active:scale-[0.97]"
               >
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <MapPin className="h-3 w-3 text-primary shrink-0" />
-                  <span className="text-sm font-semibold text-foreground group-hover:text-primary">
-                    {area.name}
+                <div className="flex items-center justify-center gap-2">
+                  <MapPin className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-bold text-foreground group-hover:text-primary">
+                    All Areas / Locations
                   </span>
                 </div>
-                <span className="text-[10px] text-muted-foreground">
-                  {area.salons_count} salon{area.salons_count !== 1 ? "s" : ""}
-                </span>
               </button>
-            ))
+
+              {locations.map((area) => (
+                <button
+                  key={area.id}
+                  onClick={() => handleSelectArea(area)}
+                  className="group rounded-2xl border border-border bg-card px-4 py-3.5 text-left transition-all hover:border-primary hover:bg-primary/5 active:scale-[0.97]"
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <MapPin className="h-3 w-3 text-primary shrink-0" />
+                    <span className="text-sm font-semibold text-foreground group-hover:text-primary">
+                      {area.name}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    {area.salons_count} salon{area.salons_count !== 1 ? "s" : ""}
+                  </span>
+                </button>
+              ))}
+            </>
           )}
         </div>
       </motion.div>

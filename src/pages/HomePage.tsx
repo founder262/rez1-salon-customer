@@ -104,7 +104,7 @@ const HomePage = () => {
     // for maximum flexibility (unisex logic, multi-field search, service name search)
     let q = supabase
       .from("salons")
-      .select("id, name, owner_name, salon_images, categories, rating, review_count, address, city, area, locality, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration, category), locations(name)")
+      .select("id, name, salon_images, categories, rating, review_count, address, open_time, close_time, is_open, is_emergency_mode, subscription, salon_offers(*), services(id, name, price, duration, category), locations(name)")
       .eq("is_suspended", false)
       .eq("is_visible", true)
       .eq("is_approved", true)
@@ -155,11 +155,7 @@ const HomePage = () => {
 
         const corpus = [
           salon.name || "",
-          salon.owner_name || "",
           salon.address || "",
-          salon.city || "",
-          salon.area || "",
-          salon.locality || "",
           locationName,
           serviceNames,
           serviceCategories,
