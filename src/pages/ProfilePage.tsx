@@ -6,7 +6,7 @@ import {
   Calendar, Heart,  
   Bell, ShieldCheck, Mail, Phone,
   Settings, HelpCircle, Info, Star,
-  ArrowLeft, Navigation, Camera, MapPin
+  ArrowLeft, Navigation, Camera, MapPin, FileText, RefreshCcw
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import Logo from "@/components/Logo";
@@ -330,8 +330,7 @@ const ProfilePage = () => {
         </motion.div>
       ))}
 
-      {/* Logout */}
-      <motion.div variants={itemVariants} className="mt-8 mb-12 px-1">
+      <motion.div variants={itemVariants} className="mt-8 mb-4 px-1">
         <button
           onClick={handleLogout}
           className="flex w-full items-center justify-center gap-3 rounded-2xl bg-destructive/5 border border-destructive/20 py-4 text-sm font-bold text-destructive transition-all hover:bg-destructive shadow-sm hover:text-white group"
@@ -339,6 +338,45 @@ const ProfilePage = () => {
           <LogOut className="h-5 w-5 transition-transform group-hover:translate-x-1" />
           Log Out
         </button>
+      </motion.div>
+
+      {/* Footer Links */}
+      <motion.div variants={itemVariants} className="mb-12 px-1">
+        <div className="rounded-2xl border border-border bg-card/50 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3 text-center">Legal &amp; Policies</p>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => navigate("/terms", { state: { tab: "terms" } })}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-muted/50 transition-colors group"
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <FileText className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span className="flex-1 text-left text-xs font-semibold text-foreground">Terms &amp; Conditions</span>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+            </button>
+            <button
+              onClick={() => navigate("/terms", { state: { tab: "privacy" } })}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-muted/50 transition-colors group"
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span className="flex-1 text-left text-xs font-semibold text-foreground">Privacy Policy</span>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+            </button>
+            <button
+              onClick={() => navigate("/terms", { state: { tab: "terms", section: 2 } })}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-muted/50 transition-colors group"
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
+                <RefreshCcw className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <span className="flex-1 text-left text-xs font-semibold text-foreground">Refund &amp; Cancellation Policy</span>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+            </button>
+          </div>
+        </div>
       </motion.div>
     </motion.div>
   );

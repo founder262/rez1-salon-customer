@@ -5,10 +5,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useState } from "react";
-import { type SalonCategory } from "@/lib/utils";
 
-type CategoryFilter = "All" | SalonCategory;
+type CategoryFilter = string;
 
 interface SearchOverlayProps {
   isOpen: boolean;
@@ -19,7 +17,14 @@ interface SearchOverlayProps {
   setQuery: (query: string) => void;
   categoryFilter: CategoryFilter;
   setCategoryFilter: (category: CategoryFilter) => void;
+  /** Whether the admin has enabled the categories feature globally */
+  categoriesEnabled?: boolean;
+  /** Dynamic category names loaded from the database */
+  dbCategories?: string[];
 }
+
+// No hardcoded fallback — if DB has no active categories, show nothing.
+const DEFAULT_CATEGORIES: string[] = [];
 
 const SearchOverlay = ({
   isOpen,
@@ -30,6 +35,8 @@ const SearchOverlay = ({
   setQuery,
   categoryFilter,
   setCategoryFilter,
+  categoriesEnabled = false,
+  dbCategories = DEFAULT_CATEGORIES,
 }: SearchOverlayProps) => {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -111,31 +118,33 @@ const SearchOverlay = ({
               : "Tip: Try 'Indiranagar' or 'Whitefield'"}
           </p>
 
-          {/* Category Filter - Now visible for both modes */}
-          <div className="mt-10">
-            <div className="mb-5 flex items-center justify-between px-1">
-              <h4 className="text-sm font-bold tracking-tight text-foreground/80 lowercase italic opacity-70">
-                #choose category
-              </h4>
-              <span className="h-[1px] flex-1 mx-4 bg-gradient-to-r from-border/50 to-transparent" />
+          {/* Category Filter — hidden when admin disables the feature */}
+          {categoriesEnabled && (
+            <div className="mt-10">
+              <div className="mb-5 flex items-center justify-between px-1">
+                <h4 className="text-sm font-bold tracking-tight text-foreground/80 lowercase italic opacity-70">
+                  #choose category
+                </h4>
+                <span className="h-[1px] flex-1 mx-4 bg-gradient-to-r from-border/50 to-transparent" />
+              </div>
+
+              <div className="flex flex-wrap gap-2 sm:gap-3">
+                {["All", ...dbCategories].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoryFilter(cat)}
+                    className={`relative flex-none rounded-2xl px-6 py-2.5 text-xs font-bold transition-all duration-300 active:scale-95 ${
+                      categoryFilter === cat
+                        ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-background"
+                        : "border border-border/40 bg-card/30 text-muted-foreground hover:border-primary/30 hover:text-foreground hover:bg-card/50"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
             </div>
-            
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              {(["All", "Men", "Women", "Unisex", "Pets", "Bridal"] as CategoryFilter[]).map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  className={`relative flex-none rounded-2xl px-6 py-2.5 text-xs font-bold transition-all duration-300 active:scale-95 ${
-                    categoryFilter === cat
-                      ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-background"
-                      : "border border-border/40 bg-card/30 text-muted-foreground hover:border-primary/30 hover:text-foreground hover:bg-card/50"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           <div className="mt-auto pt-8 sm:mt-12">
             <button

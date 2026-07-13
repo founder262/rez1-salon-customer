@@ -11,8 +11,7 @@ import SearchOverlay from "@/components/SearchOverlay";
 import { supabase } from "@/lib/supabase";
 
 type SearchMode = "salon" | "location";
-type SalonCategory = "Men" | "Women" | "Unisex" | "Pets" | "Bridal";
-type CategoryFilter = "All" | SalonCategory;
+type CategoryFilter = string;
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -25,6 +24,9 @@ const HomePage = () => {
   const { toggleFavorite, isFavorite } = useFavorites();
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [selectedLocationName, setSelectedLocationName] = useState("");
+  const [categoriesEnabled, setCategoriesEnabled] = useState(true);
+  // Start empty — NO hardcoded fallback. If DB returns nothing, no tabs show.
+  const [dbCategories, setDbCategories] = useState<string[]>([]);
 
   // Load location from customer profile
   useEffect(() => {
@@ -123,8 +125,8 @@ const HomePage = () => {
     // ── UNISEX CATEGORY FILTER (client-side) ──
     // Men    → show Men OR Unisex salons
     // Women  → show Women OR Unisex salons
-    // Unisex/Pets/Bridal → exact match only
-    if (categoryFilter !== "All") {
+    // Unisex/Pets/Bridal/Custom → exact match only
+    if (categoriesEnabled && categoryFilter !== "All") {
       result = result.filter((salon: any) => {
         const rawCats = salon.categories || (salon.category ? [salon.category] : []);
         const cats: string[] = (Array.isArray(rawCats) ? rawCats : [rawCats])
@@ -183,11 +185,50 @@ const HomePage = () => {
   // Fetch salons whenever location / filters / search change
   useEffect(() => {
     fetchSalons();
-  }, [selectedLocationId, categoryFilter, query, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedLocationId, categoryFilter, query, searchMode, categoriesEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch banners once on mount
   useEffect(() => {
     fetchBanners();
+  }, []);
+
+  // Fetch platform configuration and categories on mount
+  useEffect(() => {
+    const fetchConfigAndCategories = async () => {
+      try {
+        // 1. Read the global toggle from platform_config
+        const { data: configData, error: configErr } = await supabase
+          .from("platform_config")
+          .select("categories_enabled")
+          .maybeSingle();
+
+        const globalEnabled = configErr || !configData
+          ? true  // if fetch fails keep UI as-is
+          : configData.categories_enabled !== false;
+
+        // 2. Fetch active categories from DB
+        const { data: catData, error: catErr } = await supabase
+          .from("categories")
+          .select("name")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+
+        const activeCategories = (!catErr && catData) ? catData.map((c: any) => c.name) : [];
+
+        // 3. Show category section only when BOTH the global toggle is on
+        //    AND there is at least one active category in the DB.
+        const shouldShow = globalEnabled && activeCategories.length > 0;
+
+        setCategoriesEnabled(shouldShow);
+        setDbCategories(activeCategories);
+
+        // Reset any stale category filter when section is hidden
+        if (!shouldShow) setCategoryFilter("All");
+      } catch (err) {
+        console.warn("Failed to fetch dynamic categories / platform_config:", err);
+      }
+    };
+    fetchConfigAndCategories();
   }, []);
 
   // Real-time listener for services changes
@@ -239,6 +280,8 @@ const HomePage = () => {
         setQuery={setQuery}
         categoryFilter={categoryFilter}
         setCategoryFilter={setCategoryFilter}
+        categoriesEnabled={categoriesEnabled}
+        dbCategories={dbCategories}
       />
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-4 pb-32">
@@ -278,21 +321,23 @@ const HomePage = () => {
         </div>
 
         {/* Category Filter */}
-        <div className="mb-4 flex gap-2 overflow-x-auto pb-2 scrollbar-none">
-          {(["All", "Men", "Women", "Unisex", "Pets", "Bridal"] as CategoryFilter[]).map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(cat)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
-                categoryFilter === cat
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+        {categoriesEnabled && (
+          <div className="mb-4 flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {["All", ...dbCategories].map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setCategoryFilter(cat)}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+                  categoryFilter === cat
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "border border-border bg-card text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Results info */}
         {query && (

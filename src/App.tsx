@@ -22,6 +22,7 @@ import RegisterSalonPage from "@/pages/RegisterSalonPage";
 import ProfileSetupPage from "@/pages/ProfileSetupPage";
 import SignUpPage from "@/pages/SignUpPage";
 import NotFound from "@/pages/NotFound";
+import TermsPage from "@/pages/TermsPage";
 
 const queryClient = new QueryClient();
 
@@ -58,6 +59,7 @@ const App = () => (
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/register-salon" element={<RegisterSalonPage />} />
+              <Route path="/terms" element={<TermsPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             <BottomNav />
