@@ -471,17 +471,27 @@ const TermsPage = () => {
           >
             Contact Us
           </a>
-          <p className="text-xs text-muted-foreground">
-            📧{" "}
-            <a
-              href="mailto:contact@rez1.in"
-              className="text-primary font-semibold underline-offset-2 hover:underline"
-            >
-              contact@rez1.in
-            </a>
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">
+              📧{" "}
+              <a
+                href="mailto:contact@rez1.in"
+                className="text-primary font-semibold underline-offset-2 hover:underline"
+              >
+                contact@rez1.in
+              </a>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              📞{" "}
+              <a
+                href="tel:7338869230"
+                className="text-primary font-semibold underline-offset-2 hover:underline"
+              >
+                7338869230
+              </a>
+            </p>
+          </div>
         </div>
-
         {/* Version note */}
         <p className="mt-6 text-center text-[10px] font-medium uppercase tracking-widest text-muted-foreground opacity-30">
           Rez1 Salon Panel · Legal Documents · v2.5.0
