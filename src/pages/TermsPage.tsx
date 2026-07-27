@@ -123,7 +123,7 @@ const TermsPage = () => {
               Refund Processing Time
             </p>
             <p>
-              Approved refunds are processed within <strong className="text-foreground">5–7 business days</strong> to your original payment method (credit/debit card, UPI, or wallet). The exact credit time may vary depending on your bank or payment provider.
+              Approved refunds are processed within <strong className="text-foreground">5–7 business days</strong> to your original payment method (credit/debit card or UPI). The exact credit time may vary depending on your bank or payment provider.
             </p>
           </div>
 
@@ -467,10 +467,19 @@ const TermsPage = () => {
           </p>
           <a
             href="mailto:contact@rez1.in"
-            className="inline-block rounded-xl bg-primary px-6 py-2.5 text-xs font-bold text-primary-foreground shadow-sm transition-all active:scale-95"
+            className="inline-block rounded-xl bg-primary px-6 py-2.5 text-xs font-bold text-primary-foreground shadow-sm transition-all active:scale-95 mb-3"
           >
             Contact Us
           </a>
+          <p className="text-xs text-muted-foreground">
+            📧{" "}
+            <a
+              href="mailto:contact@rez1.in"
+              className="text-primary font-semibold underline-offset-2 hover:underline"
+            >
+              contact@rez1.in
+            </a>
+          </p>
         </div>
 
         {/* Version note */}
