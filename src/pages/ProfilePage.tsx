@@ -712,6 +712,8 @@ const ProfilePage = () => {
           <p className="mt-3 text-center text-xs text-muted-foreground">
             Or email us directly at{" "}
             <a href="mailto:contact@rez1.in" className="text-primary font-semibold">contact@rez1.in</a>
+            {" "}or call{" "}
+            <a href="tel:7338869230" className="text-primary font-semibold">7338869230</a>
           </p>
         </div>
       )}
