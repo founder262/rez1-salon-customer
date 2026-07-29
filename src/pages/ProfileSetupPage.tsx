@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import Logo from "@/components/Logo";
@@ -14,6 +14,22 @@ const ProfileSetupPage = () => {
   const [gender, setGender] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ name?: string; email?: string; phone?: string; dob?: string; gender?: string }>({});
+
+  // Pre-fill fields from auth metadata (useful for Google OAuth users)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { navigate("/login"); return; }
+      // Pre-fill from existing customer row if present
+      supabase.from("customers").select("full_name, email, phone").eq("id", user.id).maybeSingle().then(({ data }) => {
+        if (data?.full_name) setName(data.full_name);
+        else if (user.user_metadata?.full_name) setName(user.user_metadata.full_name);
+        if (data?.email) setEmail(data.email);
+        else if (user.email) setEmail(user.email);
+        if (data?.phone) setPhone(data.phone);
+        else if (user.phone) setPhone(user.phone);
+      });
+    });
+  }, [navigate]);
 
   const validate = () => {
     const e: typeof errors = {};
@@ -37,13 +53,15 @@ const ProfileSetupPage = () => {
       return;
     }
 
-    const { error } = await supabase.from("customers").update({
+    // Use upsert so this works for both new (Google OAuth) and existing users
+    const { error } = await supabase.from("customers").upsert({
+      id: user.id,
       full_name: name.trim(),
-      email: email.trim() || null,
+      email: email.trim() || user.email || null,
       phone: phone.trim(),
       date_of_birth: dob || null,
       gender: gender || null,
-    }).eq("id", user.id);
+    }, { onConflict: "id" });
 
     if (error) {
       toast.error(error.message);

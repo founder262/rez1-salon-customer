@@ -182,10 +182,11 @@ const BookingSummaryPage = () => {
       .eq('id', user.id)
       .maybeSingle();
 
-    if (!customerProfile?.full_name) {
-      toast.error("Please complete your profile before booking.", {
+    if (!customerProfile?.full_name || !customerProfile?.phone) {
+      const missing = !customerProfile?.full_name ? "name" : "phone number";
+      toast.error(`Please complete your profile before booking.`, {
         duration: 5000,
-        description: "Your name and details are required to confirm a booking.",
+        description: `Your ${missing} is required to confirm a booking.`,
         action: {
           label: "Complete Profile",
           onClick: () => navigate("/profile-setup"),
