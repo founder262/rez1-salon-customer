@@ -194,11 +194,12 @@ const BookingSummaryPage = () => {
       return;
     }
 
-    if (platformConfig?.razorpay_enabled) {
+    const isGatewayEnabled = platformConfig?.phonepe_enabled ?? platformConfig?.razorpay_enabled ?? true;
+
+    if (isGatewayEnabled) {
       setIsProcessing(true);
 
       try {
-        // ── Fetch customer phone for prefill (prevents Razorpay account-creation prompt) ──
         const { data: customerData } = await supabase
           .from("customers")
           .select("phone, full_name")
@@ -206,13 +207,11 @@ const BookingSummaryPage = () => {
           .maybeSingle();
 
         const customerPhone = customerData?.phone || user?.phone || "";
-        const customerName = customerData?.full_name || user?.user_metadata?.full_name || user?.email || "";
 
         // ── STEP 1: Create booking as 'upcoming' with payment_status 'pending' ──
-        // Owner panel filters out payment_status='pending' so this won't show until payment confirmed
         const { data: pendingBooking, error: bookingErr } = await insertBooking(
           user.id,
-          "razorpay",
+          "phonepe",
           "upcoming",
           "pending"
         );
@@ -223,187 +222,55 @@ const BookingSummaryPage = () => {
           return;
         }
 
-        // ── STEP 2: Create Razorpay Order ──
-        const { data: orderResult, error: orderErr } = await supabase.functions.invoke('create-razorpay-order', {
+        // ── Deduct points if user selected reward points ──
+        if (pointsUsed > 0) {
+          try {
+            await supabase
+              .from("customers")
+              .update({ reward_points: Math.max(0, customerPoints - pointsUsed) })
+              .eq("id", user.id);
+            await supabase.functions.invoke("admin-api", {
+              body: {
+                action: "INSERT",
+                table: "reward_transactions",
+                data: {
+                  user_id: user.id,
+                  points: -pointsUsed,
+                  transaction_type: "Points Redeemed",
+                  description: `Points redeemed at checkout for booking at ${salon?.name}`,
+                  booking_id: pendingBooking.id,
+                  created_at: new Date().toISOString(),
+                }
+              }
+            });
+          } catch (ptErr) {
+            console.warn("Points deduction failed (non-blocking):", ptErr);
+          }
+        }
+
+        // ── STEP 2: Initiate PhonePe Payment Redirect ──
+        const redirectUrl = `${window.location.origin}/payment-status?bookingId=${pendingBooking.id}`;
+
+        const { data: payResult, error: payErr } = await supabase.functions.invoke('initiate-phonepe-payment', {
           body: {
-            salonId: salon.id,
+            bookingId: pendingBooking.id,
             amount: finalPayableAmount,
-            currency: "INR",
-            receipt: `rez1_${pendingBooking.id.slice(0, 8)}_${Date.now()}`,
-            description: `Booking at ${salon.name}`,
+            customerPhone,
+            redirectUrl,
           }
         });
 
-        if (orderErr || !orderResult?.success) {
-          toast.error(orderResult?.error || "Failed to create payment order");
+        if (payErr || !payResult?.success || !payResult?.redirectUrl) {
+          toast.error(payResult?.error || payErr?.message || "Failed to initiate PhonePe payment");
           setIsProcessing(false);
           return;
         }
 
-        setIsProcessing(false);
-
-        // ── STEP 3: Open Razorpay Checkout (BookMyShow-style UPI-first config) ──
-        const options = {
-          key: orderResult.keyId,
-          amount: orderResult.amount,
-          currency: orderResult.currency,
-          order_id: orderResult.orderId,
-          name: "REZ1",
-          description: `Booking at ${salon.name}`,
-          image: window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
-            ? "https://ui-avatars.com/api/?name=REZ1&background=B8860B&color=fff&size=256&rounded=true&font-size=0.33&bold=true" 
-            : `${window.location.origin}/rez1-logo.svg`,
-
-          // ── Pre-fill user details so no account creation prompt ──
-          prefill: {
-            name: customerName,
-            email: user?.email || "",
-            contact: customerPhone,
-          },
-
-          // ── Mark fields readonly so Razorpay doesn't prompt user to fill them ──
-          readonly: {
-            contact: !!customerPhone,
-            email: !!user?.email,
-            name: !!customerName,
-          },
-
-          // ── Disable Razorpay account creation / save card prompts ──
-          remember_customer: false,
-
-          notes: {
-            bookingId: pendingBooking.id,
-            salonId: salon.id,
-          },
-
-          // ── REZ1 dark-gold theme ──
-          theme: {
-            color: "#B8860B",
-            hide_topbar: false,
-            backdrop_color: "rgba(0,0,0,0.85)",
-          },
-
-          modal: {
-            // When user dismisses Razorpay, silently cancel the booking to free the slot
-            ondismiss: async () => {
-              setIsProcessing(false);
-              if (pendingBooking?.id) {
-                // Direct DB update via admin-api — no notifications sent (not a real cancellation)
-                await supabase.functions.invoke("admin-api", {
-                  body: {
-                    action: "UPDATE",
-                    table: "bookings",
-                    id: pendingBooking.id,
-                    data: {
-                      status: "cancelled",
-                      payment_status: "failed",
-                      cancel_reason: "Payment dismissed by customer",
-                      updated_at: new Date().toISOString(),
-                    },
-                  },
-                });
-              }
-            },
-            confirm_close: true,
-            escape: true,
-          },
-
-          handler: async function (response: any) {
-            // ── STEP 4: Verify Signature Server-Side (SECURE) ──
-            setIsProcessing(true);
-
-            try {
-              const verifyResult = await supabase.functions.invoke('verify-razorpay-payment', {
-                body: {
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_signature: response.razorpay_signature,
-                  booking_id: pendingBooking.id,
-                }
-              });
-
-              if (verifyResult.error || !verifyResult.data?.success) {
-                console.error("Payment verification failed:", verifyResult);
-                toast.error("Payment verification failed. Please contact support.");
-                setIsProcessing(false);
-                return;
-              }
-
-              // ── STEP 5: Payment Verified - Booking Confirmed ──
-              toast.success("Payment verified! Booking confirmed.");
-
-              // ── DEDUCT POINTS IF USED ──
-              if (pointsUsed > 0) {
-                try {
-                  // Deduct points from customer
-                  await supabase
-                    .from("customers")
-                    .update({ reward_points: Math.max(0, customerPoints - pointsUsed) })
-                    .eq("id", user.id);
-                  // Record in reward_transactions
-                  await supabase.functions.invoke("admin-api", {
-                    body: {
-                      action: "INSERT",
-                      table: "reward_transactions",
-                      data: {
-                        user_id: user.id,
-                        points: -pointsUsed,
-                        transaction_type: "Points Redeemed",
-                        description: `Points redeemed at checkout for booking at ${salon?.name}`,
-                        booking_id: pendingBooking.id,
-                        created_at: new Date().toISOString(),
-                      }
-                    }
-                  });
-                } catch (ptErr) {
-                  console.warn("Points deduction failed (non-blocking):", ptErr);
-                }
-              }
-
-              setIsProcessing(false);
-              navigate(`/confirmation/${salon.id}`, {
-                state: {
-                  booking: verifyResult.data.booking,
-                  finalPayableAmount,
-                  paymentVerified: true
-                }
-              });
-            } catch (err: any) {
-              console.error("Payment verification error:", err);
-              toast.error("Failed to verify payment. Please contact support.");
-              setIsProcessing(false);
-            }
-          },
-        };
-
-        const rzp = new (window as any).Razorpay(options);
-        
-        rzp.on('payment.failed', async function (response: any) {
-          toast.error(response.error.description || "Payment failed. Please try again.");
-          setIsProcessing(false);
-          
-          // Silently cancel booking via admin-api (no notifications — not a real customer cancellation)
-          if (pendingBooking?.id) {
-            await supabase.functions.invoke("admin-api", {
-              body: {
-                action: "UPDATE",
-                table: "bookings",
-                id: pendingBooking.id,
-                data: {
-                  status: "cancelled",
-                  payment_status: "failed",
-                  cancel_reason: "Payment failed",
-                  updated_at: new Date().toISOString(),
-                },
-              },
-            });
-          }
-        });
-        
-        rzp.open();
+        // Redirect customer to PhonePe hosted checkout page
+        window.location.href = payResult.redirectUrl;
 
       } catch (err: any) {
-        console.error("Razorpay payment error:", err);
+        console.error("PhonePe payment error:", err);
         toast.error("Payment initialization failed. Please try again.");
         setIsProcessing(false);
       }
@@ -971,20 +838,20 @@ const BookingSummaryPage = () => {
             <span>
               {state?.reschedulingBookingId 
                 ? "Confirm Reschedule" 
-                : platformConfig?.razorpay_enabled 
+                : (platformConfig?.phonepe_enabled ?? true)
                 ? "Pay Securely" 
                 : "Pay via UPI"} - ₹{state?.reschedulingBookingId ? 0 : finalPayableAmount}
             </span>
             <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
           </button>
           <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-60">
-            {state?.reschedulingBookingId ? "Free slot rescheduling" : platformConfig?.razorpay_enabled ? "Powered by Razorpay" : "Direct payment to salon"}
+            {state?.reschedulingBookingId ? "Free slot rescheduling" : (platformConfig?.phonepe_enabled ?? true) ? "Powered by PhonePe" : "Direct payment to salon"}
           </p>
           <p className="mt-1 text-center text-[11px] text-muted-foreground opacity-80">
             {state?.reschedulingBookingId 
               ? "Confirming will instantly reschedule your slot. No extra charges apply." 
-              : platformConfig?.razorpay_enabled 
-              ? "Secure payments via Razorpay — cards, UPI, wallets, netbanking." 
+              : (platformConfig?.phonepe_enabled ?? true)
+              ? "Secure payments via PhonePe — UPI, cards, wallets, netbanking." 
               : "Complete UPI payment in your app, then confirm here."}
           </p>
         </div>

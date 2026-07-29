@@ -23,6 +23,7 @@ import ProfileSetupPage from "@/pages/ProfileSetupPage";
 import SignUpPage from "@/pages/SignUpPage";
 import NotFound from "@/pages/NotFound";
 import TermsPage from "@/pages/TermsPage";
+import PaymentStatusPage from "@/pages/PaymentStatusPage";
 
 const queryClient = new QueryClient();
 
@@ -60,6 +61,7 @@ const App = () => (
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/register-salon" element={<RegisterSalonPage />} />
               <Route path="/terms" element={<TermsPage />} />
+              <Route path="/payment-status" element={<PaymentStatusPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             <BottomNav />

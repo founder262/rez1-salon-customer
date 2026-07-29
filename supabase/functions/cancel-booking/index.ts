@@ -7,6 +7,69 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+async function sha256Str(str: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function triggerPhonePeRefund(supabaseAdmin: any, booking: any, refundAmount: number) {
+  try {
+    const { data: config } = await supabaseAdmin
+      .from("platform_config")
+      .select("phonepe_merchant_id, phonepe_salt_key, phonepe_salt_index, phonepe_env")
+      .maybeSingle();
+
+    const merchantId = config?.phonepe_merchant_id || Deno.env.get("PHONEPE_MERCHANT_ID") || "PGTESTPAYUAT";
+    const saltKey = config?.phonepe_salt_key || Deno.env.get("PHONEPE_SALT_KEY") || "099eb0cd-02fc-4e41-88db-1032db451407";
+    const saltIndex = config?.phonepe_salt_index || Deno.env.get("PHONEPE_SALT_INDEX") || "1";
+    const env = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase();
+
+    const refundUrl = env === "PROD"
+      ? "https://api.phonepe.com/apis/hermes/pg/v1/refund"
+      : "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/refund";
+
+    const originalTxnId = booking.phonepe_merchant_transaction_id;
+    if (!originalTxnId) return null;
+
+    const refundMerchantTransactionId = `RF_${booking.id.replace(/-/g, "").slice(0, 8)}_${Date.now()}`;
+
+    const payloadObj = {
+      merchantId,
+      merchantTransactionId: refundMerchantTransactionId,
+      originalTransactionId: originalTxnId,
+      amount: Math.round(refundAmount * 100),
+      callbackUrl: `${Deno.env.get("SUPABASE_URL")}/functions/v1/verify-phonepe-payment`,
+    };
+
+    const base64Payload = btoa(JSON.stringify(payloadObj));
+    const stringToSign = base64Payload + "/pg/v1/refund" + saltKey;
+    const hash = await sha256Str(stringToSign);
+    const xVerify = `${hash}###${saltIndex}`;
+
+    const res = await fetch(refundUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-VERIFY": xVerify,
+      },
+      body: JSON.stringify({ request: base64Payload }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return data.data?.transactionId || refundMerchantTransactionId;
+    } else {
+      console.error("PhonePe refund failed:", data);
+      return null;
+    }
+  } catch (err) {
+    console.error("triggerPhonePeRefund error:", err);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -90,8 +153,18 @@ Deno.serve(async (req) => {
             console.error('Razorpay refund failed:', refundData)
           }
         }
+      } else if (
+        (booking.payment_method === 'phonepe' || booking.phonepe_merchant_transaction_id) &&
+        booking.payment_status === 'paid' &&
+        refundAmount > 0
+      ) {
+        const ppTxnId = await triggerPhonePeRefund(supabaseAdmin, booking, refundAmount)
+        if (ppTxnId) {
+          refundId = ppTxnId
+          refundStatus = 'processing'
+        }
       } else {
-        // If not razorpay or not paid, mark as manually refunded / completed
+        // If not razorpay/phonepe or not paid, mark as manually refunded / completed
         refundStatus = 'refunded'
       }
 
@@ -173,6 +246,15 @@ Deno.serve(async (req) => {
           } else {
             console.error('Razorpay refund failed:', refundData)
           }
+        }
+      } else if (
+        (booking.payment_method === 'phonepe' || booking.phonepe_merchant_transaction_id) &&
+        refundAmount > 0
+      ) {
+        const ppTxnId = await triggerPhonePeRefund(supabaseAdmin, booking, refundAmount)
+        if (ppTxnId) {
+          refundId = ppTxnId
+          refundStatus = 'processing'
         }
       } else {
         refundStatus = 'refunded'
@@ -291,6 +373,18 @@ Deno.serve(async (req) => {
               console.error('Razorpay refund failed:', refundData)
               refundStatus = 'failed'
             }
+          }
+        } else if (
+          (booking.payment_method === 'phonepe' || booking.phonepe_merchant_transaction_id) &&
+          booking.payment_status === 'paid' &&
+          refundAmount > 0
+        ) {
+          const ppTxnId = await triggerPhonePeRefund(supabaseAdmin, booking, refundAmount)
+          if (ppTxnId) {
+            refundId = ppTxnId
+            refundStatus = 'processing'
+          } else {
+            refundStatus = 'failed'
           }
         } else {
           // If Direct UPI or cash, mark as manual refund pending

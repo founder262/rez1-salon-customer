@@ -247,7 +247,7 @@ const TermsPage = () => {
           <p>We do <strong className="text-foreground">not</strong> sell your personal data. We may share data with:</p>
           <ul className="list-disc list-inside space-y-1 pl-2">
             <li><strong className="text-foreground">Salons:</strong> Your name and contact details are shared with the salon you book with.</li>
-            <li><strong className="text-foreground">Payment Processors:</strong> Razorpay and other gateways for secure payment processing.</li>
+            <li><strong className="text-foreground">Payment Processors:</strong> PhonePe and other gateways for secure payment processing.</li>
             <li><strong className="text-foreground">Legal Authorities:</strong> When required by law or to protect Rez1's rights.</li>
           </ul>
         </div>

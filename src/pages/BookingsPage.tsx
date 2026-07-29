@@ -296,7 +296,7 @@ const BookingsPage = () => {
                 {(() => {
                   const { refundAmount, platformFee } = getRefundPreview(cancelTarget);
                   const isPaid =
-                    cancelTarget?.payment_method === "razorpay" &&
+                    (cancelTarget?.payment_method === "razorpay" || cancelTarget?.payment_method === "phonepe" || cancelTarget?.phonepe_merchant_transaction_id) &&
                     cancelTarget?.payment_status === "paid";
 
                   return isPaid ? (
@@ -320,8 +320,8 @@ const BookingsPage = () => {
                   ) : (
                     <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)" }}>
                       <p className="text-xs" style={{ color: "#888" }}>
-                        {cancelTarget?.payment_method === "razorpay"
-                          ? "Payment status is not 'paid' — no refund will be processed."
+                        {cancelTarget?.payment_status !== 'paid'
+                          ? "Payment not confirmed — no refund will be processed."
                           : "UPI direct payments are refunded manually by the salon."}
                       </p>
                     </div>
@@ -492,7 +492,7 @@ const BookingsPage = () => {
                           {b.cancelled_by === 'emergency' ? '🚨 Emergency Closure' : b.cancelled_by === 'admin' ? 'Cancelled by Admin' : 'Cancelled by Salon'}
                         </p>
                         <p className="mt-1 text-[11px] text-muted-foreground">
-                          {b.payment_status === 'paid' && b.payment_method === 'razorpay'
+                          {b.payment_status === 'paid'
                             ? (b.cancelled_by === 'emergency'
                               ? 'The salon had to close due to an emergency. You are eligible for a free reschedule or a full refund.'
                               : 'This booking was cancelled. You are eligible for a free reschedule to another slot or a full refund.')
@@ -517,7 +517,7 @@ const BookingsPage = () => {
                             <RefreshCcw className="h-3 w-3" />
                             Reschedule Slot
                           </button>
-                          {b.payment_status === 'paid' && b.payment_method === 'razorpay' && (
+                          {b.payment_status === 'paid' && (b.payment_method === 'razorpay' || b.payment_method === 'phonepe' || b.phonepe_merchant_transaction_id) && (
                             <button
                               onClick={async () => {
                                 try {

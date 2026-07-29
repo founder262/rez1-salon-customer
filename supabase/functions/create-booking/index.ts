@@ -37,6 +37,8 @@ serve(async (req: Request) => {
       durationMinutes,
       services,
       razorpayPaymentId,
+      phonepeMerchantTransactionId,
+      phonepeTransactionId,
       serviceNames,
       customerName,
       slotTimeLabel,
@@ -149,6 +151,8 @@ serve(async (req: Request) => {
         duration_minutes: durationMinutes,
         service_names: serviceNames,
         razorpay_payment_id: razorpayPaymentId || null,
+        phonepe_merchant_transaction_id: phonepeMerchantTransactionId || null,
+        phonepe_transaction_id: phonepeTransactionId || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
