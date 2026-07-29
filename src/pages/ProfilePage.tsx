@@ -43,14 +43,37 @@ const ProfilePage = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
-        const { data } = await supabase.from("customers").select("full_name, email, phone, avatar_url, reward_points").eq("id", user.id).maybeSingle();
+        // Fetch core profile fields separately from reward_points
+        // to avoid a missing column breaking the entire fetch
+        const { data, error } = await supabase
+          .from("customers")
+          .select("full_name, email, phone, avatar_url")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Profile fetch error:", error.message);
+        }
+
         if (data) {
           setName(data.full_name || "");
           setEmail(data.email || "");
           setPhone(data.phone || user.phone || "");
           setAvatarUrl(data.avatar_url || "");
-          // Set reward points directly from DB
-          setStats(prev => ({ ...prev, points: data.reward_points || 0 }));
+        }
+
+        // Fetch reward_points separately (column may not exist in older DBs)
+        try {
+          const { data: rewardData } = await supabase
+            .from("customers")
+            .select("reward_points")
+            .eq("id", user.id)
+            .maybeSingle();
+          if (rewardData?.reward_points !== undefined) {
+            setStats(prev => ({ ...prev, points: rewardData.reward_points || 0 }));
+          }
+        } catch {
+          // reward_points column might not exist yet — ignore
         }
       }
     };
