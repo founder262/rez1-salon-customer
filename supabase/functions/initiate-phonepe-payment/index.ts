@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
     if (!bookingId || !amount) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required bookingId or amount" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -43,108 +43,105 @@ Deno.serve(async (req) => {
       .select("phonepe_enabled, phonepe_merchant_id, phonepe_client_id, phonepe_client_secret, phonepe_client_version, phonepe_salt_key, phonepe_salt_index, phonepe_env")
       .maybeSingle();
 
-    const merchantId   = config?.phonepe_merchant_id   || Deno.env.get("PHONEPE_MERCHANT_ID")   || "PGTESTPAYUAT";
-    const clientId     = config?.phonepe_client_id     || Deno.env.get("PHONEPE_CLIENT_ID")     || "";
-    const clientSecret = config?.phonepe_client_secret || Deno.env.get("PHONEPE_CLIENT_SECRET") || "";
-    const clientVersion= config?.phonepe_client_version|| Deno.env.get("PHONEPE_CLIENT_VERSION")|| "1";
-    const saltKey      = config?.phonepe_salt_key      || Deno.env.get("PHONEPE_SALT_KEY")      || "099eb0cd-02fc-4e41-88db-1032db451407";
-    const saltIndex    = config?.phonepe_salt_index    || Deno.env.get("PHONEPE_SALT_INDEX")    || "1";
-    const env          = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase();
+    const merchantId    = (config?.phonepe_merchant_id    || Deno.env.get("PHONEPE_MERCHANT_ID")    || "PGTESTPAYUAT").trim();
+    const clientId      = (config?.phonepe_client_id      || Deno.env.get("PHONEPE_CLIENT_ID")      || "").trim();
+    const clientSecret  = (config?.phonepe_client_secret  || Deno.env.get("PHONEPE_CLIENT_SECRET")  || "").trim();
+    const clientVersion = (config?.phonepe_client_version || Deno.env.get("PHONEPE_CLIENT_VERSION") || "1").trim();
+    const saltKey       = (config?.phonepe_salt_key       || Deno.env.get("PHONEPE_SALT_KEY")       || "099eb0cd-02fc-4e41-88db-1032db451407").trim();
+    const saltIndex     = (config?.phonepe_salt_index     || Deno.env.get("PHONEPE_SALT_INDEX")     || "1").trim();
+    const rawEnv        = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase().trim();
+    const isProd        = ["PROD", "PRODUCTION", "LIVE"].includes(rawEnv);
+
+    console.log(`[initiate-phonepe] Environment: ${rawEnv} | isProd: ${isProd} | MerchantID: ${merchantId}`);
 
     // ── Create unique Merchant Transaction / Order ID ──
     const cleanBookingId = bookingId.replace(/-/g, "").slice(0, 10);
     const merchantTransactionId = `MT${cleanBookingId}${Date.now()}`.slice(0, 35);
 
-    const supabaseUrl  = Deno.env.get("SUPABASE_URL") ?? "";
-    const callbackUrl  = `${supabaseUrl}/functions/v1/verify-phonepe-payment`;
+    const supabaseUrl      = Deno.env.get("SUPABASE_URL") ?? "";
+    const callbackUrl      = `${supabaseUrl}/functions/v1/verify-phonepe-payment`;
     const finalRedirectUrl = redirectUrl || callbackUrl;
 
     let finalRedirectLink: string | null = null;
+    let pg2Failed = false;
 
     // ══════════════════════════════════════════════════════════
     // PG 2.0 Flow — OAuth Client Credentials (clientId + secret)
     // ══════════════════════════════════════════════════════════
     if (clientId && clientSecret) {
-      console.log("[initiate-phonepe] Using PG 2.0 OAuth flow");
+      console.log("[initiate-phonepe] Attempting PG 2.0 OAuth flow");
 
-      const tokenUrl = env === "PROD"
+      const tokenUrl = isProd
         ? "https://api.phonepe.com/apis/pg/v1/oauth/token"
         : "https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token";
 
-      const tokenRes = await fetch(tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "client_credentials",
-          client_id: clientId,
-          client_secret: clientSecret,
-          client_version: String(clientVersion),
-        }),
-      });
+      try {
+        const tokenRes = await fetch(tokenUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: clientId,
+            client_secret: clientSecret,
+            client_version: String(clientVersion),
+          }),
+        });
 
-      const tokenData = await tokenRes.json();
-      console.log("[initiate-phonepe] Token response status:", tokenRes.status, "| body:", JSON.stringify(tokenData));
+        const tokenData = await tokenRes.json();
+        console.log("[initiate-phonepe] Token response:", tokenRes.status, JSON.stringify(tokenData));
 
-      if (!tokenRes.ok || !tokenData.access_token) {
-        const errMsg = tokenData.error_description || tokenData.error || "Failed to obtain PhonePe OAuth token";
-        console.error("[initiate-phonepe] Token error:", errMsg);
-        return new Response(
-          JSON.stringify({ success: false, error: errMsg }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+        if (tokenRes.ok && tokenData.access_token) {
+          const accessToken = tokenData.access_token;
 
-      const accessToken = tokenData.access_token;
+          const payUrl = isProd
+            ? "https://api.phonepe.com/apis/pg/checkout/v2/pay"
+            : "https://api-preprod.phonepe.com/apis/pg-sandbox/checkout/v2/pay";
 
-      const payUrl = env === "PROD"
-        ? "https://api.phonepe.com/apis/pg/checkout/v2/pay"
-        : "https://api-preprod.phonepe.com/apis/pg-sandbox/checkout/v2/pay";
-
-      const payRes = await fetch(payUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `O-Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          merchantOrderId: merchantTransactionId,
-          amount: Math.round(amount * 100), // paise
-          expireAfter: 1200,
-          metaInfo: {
-            udf1: bookingId,
-            udf2: "REZ1_SALON",
-          },
-          paymentFlow: {
-            type: "PG_CHECKOUT",
-            message: "REZ1 Salon Booking",
-            merchantUrls: {
-              redirectUrl: finalRedirectUrl,
+          const payRes = await fetch(payUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `O-Bearer ${accessToken}`,
             },
-          },
-        }),
-      });
+            body: JSON.stringify({
+              merchantOrderId: merchantTransactionId,
+              amount: Math.round(amount * 100),
+              expireAfter: 1200,
+              metaInfo: { udf1: bookingId, udf2: "REZ1_SALON" },
+              paymentFlow: {
+                type: "PG_CHECKOUT",
+                message: "REZ1 Salon Booking",
+                merchantUrls: { redirectUrl: finalRedirectUrl },
+              },
+            }),
+          });
 
-      const payData = await payRes.json();
-      console.log("[initiate-phonepe] PG 2.0 pay response status:", payRes.status, "| body:", JSON.stringify(payData));
+          const payData = await payRes.json();
+          console.log("[initiate-phonepe] PG 2.0 pay response:", payRes.status, JSON.stringify(payData));
 
-      if (!payRes.ok || !payData.redirectUrl) {
-        const errMsg = payData.message || payData.error || payData.code || "PhonePe PG 2.0 payment initiation failed";
-        console.error("[initiate-phonepe] PG 2.0 pay error:", errMsg);
-        return new Response(
-          JSON.stringify({ success: false, error: errMsg, raw: payData }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+          if (payRes.ok && payData.redirectUrl) {
+            finalRedirectLink = payData.redirectUrl;
+          } else {
+            console.warn("[initiate-phonepe] PG 2.0 failed, falling back to PG 1.x", payData);
+            pg2Failed = true;
+          }
+        } else {
+          console.warn("[initiate-phonepe] OAuth token failed, falling back to PG 1.x", tokenData);
+          pg2Failed = true;
+        }
+      } catch (oauthErr) {
+        console.error("[initiate-phonepe] OAuth exception:", oauthErr);
+        pg2Failed = true;
       }
+    }
 
-      finalRedirectLink = payData.redirectUrl;
+    // ══════════════════════════════════════════════════════════
+    // PG 1.x Fallback — Salt Key / SHA256 signing
+    // ══════════════════════════════════════════════════════════
+    if (!finalRedirectLink && (pg2Failed || !clientId || !clientSecret)) {
+      console.log("[initiate-phonepe] Executing PG 1.x salt-key flow");
 
-    } else {
-      // ══════════════════════════════════════════════════════════
-      // PG 1.x Fallback — Salt Key / SHA256 signing
-      // ══════════════════════════════════════════════════════════
-      console.log("[initiate-phonepe] Using PG 1.x salt-key flow");
-
-      const baseUrl = env === "PROD"
+      const baseUrl = isProd
         ? "https://api.phonepe.com/apis/hermes/pg/v1/pay"
         : "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
 
@@ -160,10 +157,10 @@ Deno.serve(async (req) => {
         paymentInstrument: { type: "PAY_PAGE" },
       };
 
-      const base64Payload  = btoa(JSON.stringify(payloadObj));
-      const stringToSign   = base64Payload + "/pg/v1/pay" + saltKey;
-      const hash           = await sha256(stringToSign);
-      const xVerify        = `${hash}###${saltIndex}`;
+      const base64Payload = btoa(JSON.stringify(payloadObj));
+      const stringToSign  = base64Payload + "/pg/v1/pay" + saltKey;
+      const hash          = await sha256(stringToSign);
+      const xVerify       = `${hash}###${saltIndex}`;
 
       const phonepeRes = await fetch(baseUrl, {
         method: "POST",
@@ -172,24 +169,28 @@ Deno.serve(async (req) => {
       });
 
       const phonepeData = await phonepeRes.json();
-      console.log("[initiate-phonepe] PG 1.x response status:", phonepeRes.status, "| body:", JSON.stringify(phonepeData));
+      console.log("[initiate-phonepe] PG 1.x response:", phonepeRes.status, JSON.stringify(phonepeData));
 
-      if (!phonepeRes.ok || !phonepeData.success) {
-        const errMsg = phonepeData.message || phonepeData.code || "PhonePe PG 1.x payment initiation failed";
-        console.error("[initiate-phonepe] PG 1.x error:", errMsg);
+      if (phonepeRes.ok && phonepeData.success) {
+        finalRedirectLink = phonepeData.data?.instrumentResponse?.redirectInfo?.url;
+      } else {
+        const errMsg = phonepeData.message || phonepeData.code || "PhonePe payment initiation failed";
+        console.error("[initiate-phonepe] PG 1.x error:", errMsg, phonepeData);
         return new Response(
-          JSON.stringify({ success: false, error: errMsg, raw: phonepeData }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({
+            success: false,
+            error: `PhonePe Error (${phonepeData.code || phonepeRes.status}): ${errMsg}`,
+            raw: phonepeData,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
-      finalRedirectLink = phonepeData.data?.instrumentResponse?.redirectInfo?.url;
     }
 
     if (!finalRedirectLink) {
       return new Response(
-        JSON.stringify({ success: false, error: "PhonePe did not return a redirect URL" }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ success: false, error: "PhonePe did not return a checkout URL. Please verify your Merchant ID and Salt Key in Admin settings." }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -219,7 +220,7 @@ Deno.serve(async (req) => {
     console.error("[initiate-phonepe] FATAL:", err);
     return new Response(
       JSON.stringify({ success: false, error: err.message || "Internal server error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

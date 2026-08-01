@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body.response) {
-        // S2S Callback base64 payload
+        // S2S Callback base64 payload from PhonePe webhook
         try {
           const decoded = JSON.parse(atob(body.response));
           merchantTransactionId = decoded.data?.merchantTransactionId || decoded.merchantOrderId;
@@ -55,13 +55,14 @@ Deno.serve(async (req) => {
       }
     } else if (req.method === "GET") {
       const url = new URL(req.url);
-      merchantTransactionId = url.searchParams.get("merchantTransactionId")
-        || url.searchParams.get("transactionId")
-        || url.searchParams.get("merchantOrderId");
+      merchantTransactionId =
+        url.searchParams.get("merchantTransactionId") ||
+        url.searchParams.get("transactionId") ||
+        url.searchParams.get("merchantOrderId");
       bookingId = url.searchParams.get("bookingId");
     }
 
-    // PhonePe Webhook validation ping
+    // PhonePe Webhook validation ping (empty body)
     if (!merchantTransactionId && !bookingId) {
       return new Response(
         JSON.stringify({ success: true, message: "PhonePe Webhook verification endpoint active" }),
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // If already paid, return success immediately
+    // If already paid, return success immediately (idempotent)
     if (bookingRecord?.payment_status === "paid") {
       return new Response(
         JSON.stringify({ success: true, message: "Payment already verified", booking: bookingRecord }),
@@ -107,91 +108,98 @@ Deno.serve(async (req) => {
       .select("phonepe_merchant_id, phonepe_client_id, phonepe_client_secret, phonepe_client_version, phonepe_salt_key, phonepe_salt_index, phonepe_env")
       .maybeSingle();
 
-    const merchantId   = config?.phonepe_merchant_id   || Deno.env.get("PHONEPE_MERCHANT_ID")   || "PGTESTPAYUAT";
-    const clientId     = config?.phonepe_client_id     || Deno.env.get("PHONEPE_CLIENT_ID")     || "";
-    const clientSecret = config?.phonepe_client_secret || Deno.env.get("PHONEPE_CLIENT_SECRET") || "";
-    const clientVersion= config?.phonepe_client_version|| Deno.env.get("PHONEPE_CLIENT_VERSION")|| "1";
-    const saltKey      = config?.phonepe_salt_key      || Deno.env.get("PHONEPE_SALT_KEY")      || "099eb0cd-02fc-4e41-88db-1032db451407";
-    const saltIndex    = config?.phonepe_salt_index    || Deno.env.get("PHONEPE_SALT_INDEX")    || "1";
-    const env          = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase();
+    const merchantId    = (config?.phonepe_merchant_id    || Deno.env.get("PHONEPE_MERCHANT_ID")    || "PGTESTPAYUAT").trim();
+    const clientId      = (config?.phonepe_client_id      || Deno.env.get("PHONEPE_CLIENT_ID")      || "").trim();
+    const clientSecret  = (config?.phonepe_client_secret  || Deno.env.get("PHONEPE_CLIENT_SECRET")  || "").trim();
+    const clientVersion = (config?.phonepe_client_version || Deno.env.get("PHONEPE_CLIENT_VERSION") || "1").trim();
+    const saltKey       = (config?.phonepe_salt_key       || Deno.env.get("PHONEPE_SALT_KEY")       || "099eb0cd-02fc-4e41-88db-1032db451407").trim();
+    const saltIndex     = (config?.phonepe_salt_index     || Deno.env.get("PHONEPE_SALT_INDEX")     || "1").trim();
+    const rawEnv        = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase().trim();
+    const isProd        = ["PROD", "PRODUCTION", "LIVE"].includes(rawEnv);
 
-    let isSuccess     = false;
-    let transactionId: string | null = null;
+    console.log(`[verify-phonepe] Environment: ${rawEnv} | isProd: ${isProd} | MerchantID: ${merchantId}`);
+
+    let isSuccess           = false;
+    let transactionId:       string | null = null;
     let providerReferenceId: string | null = null;
-    let statusCode    = "";
+    let statusCode          = "";
+    let pg2StatusFailed     = false;
 
     // ══════════════════════════════════════════════════════════
     // PG 2.0 Status Check — OAuth flow
     // ══════════════════════════════════════════════════════════
     if (clientId && clientSecret) {
-      console.log("[verify-phonepe] Using PG 2.0 OAuth flow for status check");
+      console.log("[verify-phonepe] Attempting PG 2.0 OAuth status check");
 
-      const tokenUrl = env === "PROD"
+      const tokenUrl = isProd
         ? "https://api.phonepe.com/apis/pg/v1/oauth/token"
         : "https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token";
 
-      const tokenRes = await fetch(tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "client_credentials",
-          client_id: clientId,
-          client_secret: clientSecret,
-          client_version: String(clientVersion),
-        }),
-      });
+      try {
+        const tokenRes = await fetch(tokenUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: clientId,
+            client_secret: clientSecret,
+            client_version: String(clientVersion),
+          }),
+        });
 
-      const tokenData = await tokenRes.json();
-      console.log("[verify-phonepe] Token status:", tokenRes.status);
+        const tokenData = await tokenRes.json();
+        console.log("[verify-phonepe] Token status:", tokenRes.status);
 
-      if (!tokenRes.ok || !tokenData.access_token) {
-        return new Response(
-          JSON.stringify({ success: false, error: tokenData.error_description || "Failed to get OAuth token for status check" }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+        if (tokenRes.ok && tokenData.access_token) {
+          const accessToken = tokenData.access_token;
 
-      const accessToken = tokenData.access_token;
-      const statusUrl   = env === "PROD"
-        ? `https://api.phonepe.com/apis/pg/checkout/v2/order/${merchantTransactionId}/status`
-        : `https://api-preprod.phonepe.com/apis/pg-sandbox/checkout/v2/order/${merchantTransactionId}/status`;
+          const statusUrl = isProd
+            ? `https://api.phonepe.com/apis/pg/checkout/v2/order/${merchantTransactionId}/status`
+            : `https://api-preprod.phonepe.com/apis/pg-sandbox/checkout/v2/order/${merchantTransactionId}/status`;
 
-      const statusRes = await fetch(statusUrl, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `O-Bearer ${accessToken}`,
-        },
-      });
+          const statusRes = await fetch(statusUrl, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `O-Bearer ${accessToken}`,
+            },
+          });
 
-      const statusData = await statusRes.json();
-      console.log("[verify-phonepe] PG 2.0 status response:", JSON.stringify(statusData));
+          const statusData = await statusRes.json();
+          console.log("[verify-phonepe] PG 2.0 status response:", JSON.stringify(statusData));
 
-      isSuccess   = statusData.state === "COMPLETED";
-      statusCode  = statusData.state || "UNKNOWN";
-      transactionId       = statusData.paymentDetails?.[0]?.transactionId || null;
-      providerReferenceId = statusData.paymentDetails?.[0]?.paymentMode || null;
+          isSuccess           = statusData.state === "COMPLETED";
+          statusCode          = statusData.state || "UNKNOWN";
+          transactionId       = statusData.paymentDetails?.[0]?.transactionId || null;
+          providerReferenceId = statusData.paymentDetails?.[0]?.paymentMode || null;
 
-      if (!isSuccess) {
-        if (statusData.state === "FAILED") {
-          await supabaseAdmin
-            .from("bookings")
-            .update({ payment_status: "failed", updated_at: new Date().toISOString() })
-            .eq("id", bookingRecord.id);
+          if (!isSuccess && statusData.state === "FAILED") {
+            await supabaseAdmin
+              .from("bookings")
+              .update({ payment_status: "failed", updated_at: new Date().toISOString() })
+              .eq("id", bookingRecord.id);
+            return new Response(
+              JSON.stringify({ success: false, code: statusCode, message: `Payment ${statusData.state}`, booking: bookingRecord }),
+              { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        } else {
+          console.warn("[verify-phonepe] PG 2.0 token failed, falling back to PG 1.x");
+          pg2StatusFailed = true;
         }
-        return new Response(
-          JSON.stringify({ success: false, code: statusCode, message: `Payment ${statusData.state || "not completed"}`, booking: bookingRecord }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      } catch (err) {
+        console.error("[verify-phonepe] PG 2.0 status exception:", err);
+        pg2StatusFailed = true;
       }
+    }
 
-    } else {
-      // ══════════════════════════════════════════════════════════
-      // PG 1.x Status Check — Salt Key signing
-      // ══════════════════════════════════════════════════════════
-      console.log("[verify-phonepe] Using PG 1.x salt-key flow for status check");
+    // ══════════════════════════════════════════════════════════
+    // PG 1.x Status Check — Salt Key signing
+    // ══════════════════════════════════════════════════════════
+    if (!isSuccess && (pg2StatusFailed || !clientId || !clientSecret)) {
+      console.log("[verify-phonepe] Executing PG 1.x salt-key status check");
 
-      const statusApiUrl = env === "PROD"
+      const statusApiUrl = isProd
         ? `https://api.phonepe.com/apis/hermes/pg/v1/status/${merchantId}/${merchantTransactionId}`
         : `https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status/${merchantId}/${merchantTransactionId}`;
 
@@ -201,7 +209,11 @@ Deno.serve(async (req) => {
 
       const statusRes = await fetch(statusApiUrl, {
         method: "GET",
-        headers: { "Content-Type": "application/json", "X-VERIFY": xVerify, "X-MERCHANT-ID": merchantId },
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": xVerify,
+          "X-MERCHANT-ID": merchantId,
+        },
       });
 
       const statusData = await statusRes.json();
@@ -220,7 +232,12 @@ Deno.serve(async (req) => {
             .eq("id", bookingRecord.id);
         }
         return new Response(
-          JSON.stringify({ success: false, code: statusCode, message: statusData.message || "Payment verification failed or pending", booking: bookingRecord }),
+          JSON.stringify({
+            success: false,
+            code: statusCode,
+            message: statusData.message || "Payment verification failed or pending",
+            booking: bookingRecord,
+          }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -245,7 +262,7 @@ Deno.serve(async (req) => {
       throw updateError;
     }
 
-    // ── Notifications ──
+    // ── Fetch customer name ──
     let customerName = "Customer";
     try {
       const { data: custData } = await supabaseAdmin
@@ -256,6 +273,7 @@ Deno.serve(async (req) => {
       if (custData?.full_name) customerName = custData.full_name;
     } catch (_) {}
 
+    // ── Fetch salon owner ──
     let salonOwnerId: string | null = null;
     let salonName = "the salon";
     if (updatedBooking.salon_id) {
@@ -265,43 +283,48 @@ Deno.serve(async (req) => {
           .select("owner_id, name")
           .eq("id", updatedBooking.salon_id)
           .maybeSingle();
-        if (salonData) { salonOwnerId = salonData.owner_id; salonName = salonData.name; }
+        if (salonData) {
+          salonOwnerId = salonData.owner_id;
+          salonName    = salonData.name;
+        }
       } catch (_) {}
     }
 
-    const formattedTime  = formatSlotLabel(updatedBooking.booking_time || "");
-    const serviceNames   = updatedBooking.service_names || "Service";
+    const formattedTime = formatSlotLabel(updatedBooking.booking_time || "");
+    const serviceNames  = updatedBooking.service_names || "Service";
 
+    // ── Notify salon owner ──
     if (salonOwnerId && updatedBooking.salon_id) {
       await supabaseAdmin.from("owner_booking_alerts").insert({
-        owner_id: salonOwnerId,
-        salon_id: updatedBooking.salon_id,
-        booking_id: updatedBooking.id,
-        customer_name: customerName,
+        owner_id:        salonOwnerId,
+        salon_id:        updatedBooking.salon_id,
+        booking_id:      updatedBooking.id,
+        customer_name:   customerName,
         service_summary: serviceNames,
-        booking_time: formattedTime,
-        is_read: false,
+        booking_time:    formattedTime,
+        is_read:         false,
       });
 
       await supabaseAdmin.from("notifications").insert({
         target_user_id: salonOwnerId,
-        type: "booking_created",
-        title: `🔔 New Booking — ${formattedTime}`,
-        message: `${customerName} booked ${serviceNames} at ${formattedTime}. Amount: ₹${updatedBooking.total_amount}.`,
-        booking_id: updatedBooking.id,
-        is_read: false,
-        created_at: new Date().toISOString(),
+        type:           "booking_created",
+        title:          `🔔 New Booking — ${formattedTime}`,
+        message:        `${customerName} booked ${serviceNames} at ${formattedTime}. Amount: ₹${updatedBooking.total_amount}.`,
+        booking_id:     updatedBooking.id,
+        is_read:        false,
+        created_at:     new Date().toISOString(),
       });
     }
 
+    // ── Notify customer ──
     await supabaseAdmin.from("notifications").insert({
       target_user_id: updatedBooking.customer_id,
-      type: "booking_confirmed",
-      title: "✅ Booking Confirmed",
-      message: `Your PhonePe payment of ₹${updatedBooking.total_amount} is verified. Booking at ${salonName} on ${formattedTime} is confirmed!`,
-      booking_id: updatedBooking.id,
-      is_read: false,
-      created_at: new Date().toISOString(),
+      type:           "booking_confirmed",
+      title:          "✅ Booking Confirmed",
+      message:        `Your PhonePe payment of ₹${updatedBooking.total_amount} is verified. Booking at ${salonName} on ${formattedTime} is confirmed!`,
+      booking_id:     updatedBooking.id,
+      is_read:        false,
+      created_at:     new Date().toISOString(),
     });
 
     console.log("[verify-phonepe] SUCCESS — booking updated:", updatedBooking.id);
