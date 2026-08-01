@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       console.log("[verify-phonepe] Attempting PG 2.0 OAuth status check");
 
       const tokenUrl = isProd
-        ? "https://api.phonepe.com/apis/pg/v1/oauth/token"
+        ? "https://api.phonepe.com/apis/identity-manager/v1/oauth/token"
         : "https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token";
 
       try {
