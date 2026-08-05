@@ -43,11 +43,10 @@ const ProfilePage = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
-        // Fetch core profile fields separately from reward_points
-        // to avoid a missing column breaking the entire fetch
+        // Fetch all profile fields including reward_points in one query
         const { data, error } = await supabase
           .from("customers")
-          .select("full_name, email, phone, avatar_url")
+          .select("full_name, email, phone, avatar_url, reward_points")
           .eq("id", user.id)
           .maybeSingle();
 
@@ -60,20 +59,8 @@ const ProfilePage = () => {
           setEmail(data.email || "");
           setPhone(data.phone || user.phone || "");
           setAvatarUrl(data.avatar_url || "");
-        }
-
-        // Fetch reward_points separately (column may not exist in older DBs)
-        try {
-          const { data: rewardData } = await supabase
-            .from("customers")
-            .select("reward_points")
-            .eq("id", user.id)
-            .maybeSingle();
-          if (rewardData?.reward_points !== undefined) {
-            setStats(prev => ({ ...prev, points: rewardData.reward_points || 0 }));
-          }
-        } catch {
-          // reward_points column might not exist yet — ignore
+          // Set points immediately so they're ready before fetchStats runs
+          setStats(prev => ({ ...prev, points: data.reward_points || 0 }));
         }
       }
     };
@@ -166,18 +153,20 @@ const ProfilePage = () => {
         .select("*", { count: "exact", head: true })
         .eq("customer_id", userId);
 
-      // Fetch actual reward_points from customers table
+      // Fetch reward_points — use prev points to avoid overwriting with 0
+      // if the column returns null (preserve points already set by fetchProfile)
       const { data: customerData } = await supabase
         .from("customers")
         .select("reward_points")
         .eq("id", userId)
         .maybeSingle();
 
-      setStats({
+      setStats(prev => ({
         bookings: bookingCount || 0,
-        points: customerData?.reward_points || 0,  // ✅ Real points from DB
+        // If DB returns a real value use it; otherwise keep whatever fetchProfile already set
+        points: customerData?.reward_points ?? prev.points,
         reviews: reviewCount || 0
-      });
+      }));
     };
     fetchStats();
   }, [userId]);

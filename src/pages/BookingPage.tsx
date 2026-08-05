@@ -117,7 +117,9 @@ const BookingPage = () => {
     return months;
   }, [days, salon]);
 
-  const totalDuration = selectedServices.reduce((sum: number, s: any) => sum + (Number(s.duration) || 0), 0) * personCount;
+  // Duration is NOT multiplied by personCount — all persons are served simultaneously,
+  // so the slot length is the same regardless of group size. Only price scales per person.
+  const totalDuration = selectedServices.reduce((sum: number, s: any) => sum + (Number(s.duration) || 0), 0);
   const totalPrice = selectedServices.reduce((sum: number, s: any) => sum + s.price, 0) * personCount;
   const offerPercent = useMemo(() => {
     if (!salon?.salon_offers?.[0]) return 0;
