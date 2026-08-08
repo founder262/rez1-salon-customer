@@ -168,18 +168,34 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ request: base64Payload }),
       });
 
-      const phonepeData = await phonepeRes.json();
+      let phonepeData: any = {};
+      try {
+        phonepeData = await phonepeRes.json();
+      } catch (_) {
+        console.warn("[initiate-phonepe] PG 1.x response was not JSON:", phonepeRes.status);
+      }
       console.log("[initiate-phonepe] PG 1.x response:", phonepeRes.status, JSON.stringify(phonepeData));
 
       if (phonepeRes.ok && phonepeData.success) {
         finalRedirectLink = phonepeData.data?.instrumentResponse?.redirectInfo?.url;
       } else {
-        const errMsg = phonepeData.message || phonepeData.code || "PhonePe payment initiation failed";
+        let errMsg = phonepeData.message || phonepeData.code;
+        
+        if (phonepeRes.status === 404 || phonepeData.code === "404") {
+          if (isProd && merchantId === "PGTESTPAYUAT") {
+            errMsg = "Environment is set to Production (PROD), but test Merchant ID (PGTESTPAYUAT) is being used. Please set Environment Mode to Sandbox (UAT) in Admin Settings, or provide valid Production credentials.";
+          } else {
+            errMsg = `PhonePe 404 Not Found: Check if PhonePe credentials (Merchant ID: ${merchantId}, Env: ${rawEnv}) are valid for ${isProd ? "Production" : "Sandbox"} mode in Admin Settings.`;
+          }
+        } else if (!errMsg) {
+          errMsg = `PhonePe payment initiation failed (HTTP ${phonepeRes.status})`;
+        }
+
         console.error("[initiate-phonepe] PG 1.x error:", errMsg, phonepeData);
         return new Response(
           JSON.stringify({
             success: false,
-            error: `PhonePe Error (${phonepeData.code || phonepeRes.status}): ${errMsg}`,
+            error: errMsg,
             raw: phonepeData,
           }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -188,8 +204,15 @@ Deno.serve(async (req) => {
     }
 
     if (!finalRedirectLink) {
+      const hint = isProd && merchantId === "PGTESTPAYUAT"
+        ? " Environment is currently set to Production, but using test Merchant ID 'PGTESTPAYUAT'. Please switch to Sandbox (UAT) mode in Admin Settings."
+        : " Please verify your Merchant ID, Client ID/Secret, or Salt Key in Admin Settings -> PhonePe Configuration.";
+
       return new Response(
-        JSON.stringify({ success: false, error: "PhonePe did not return a checkout URL. Please verify your Merchant ID and Salt Key in Admin settings." }),
+        JSON.stringify({
+          success: false,
+          error: `PhonePe did not return a checkout URL.${hint}`,
+        }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

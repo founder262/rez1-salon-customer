@@ -136,13 +136,14 @@ const BookingsPage = () => {
       }
 
       // Build success toast with refund info
-      if (data.refund_amount > 0 && data.refund_status === "processing") {
+      const refundAmt = data.refund_amount ?? getRefundPreview(cancelTarget).refundAmount;
+      if (data.refund_status === "processing" || (refundAmt > 0 && data.refund_status !== 'failed')) {
         toast.success(
-          `Booking cancelled! Refund of ₹${data.refund_amount} initiated — will be credited within 2–7 business days depending on your bank. Platform fee ₹${data.platform_fee} is non-refundable.`,
+          `Booking cancelled! Refund of ₹${refundAmt} initiated — will be credited within 2–7 business days depending on your bank. Platform fee ₹${data.platform_fee ?? 25} is non-refundable.`,
           { duration: 8000 }
         );
       } else if (data.refund_status === 'failed') {
-        toast.warning(`Booking cancelled, but the automatic refund could not be processed. Please contact support to get your refund of ₹${data.refund_amount}.`, { duration: 8000 });
+        toast.warning(`Booking cancelled, but the automatic refund could not be processed. Request assistance from your booking card below.`, { duration: 8000 });
       } else {
         toast.success("Booking cancelled successfully.");
       }
