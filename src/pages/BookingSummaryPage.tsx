@@ -263,13 +263,7 @@ const BookingSummaryPage = () => {
         const errorMessage = payResult?.error || (payErr ? (payErr.message === "Edge Function returned a non-2xx status code" ? "PhonePe payment edge function error" : payErr.message) : null);
 
         if (payErr || !payResult?.success || !payResult?.redirectUrl) {
-          toast.error(errorMessage || "Failed to initiate PhonePe payment", {
-            duration: 8000,
-            action: {
-              label: "Pay via UPI App",
-              onClick: () => setShowUpiModal(true),
-            },
-          });
+          toast.error(errorMessage || "Failed to initiate PhonePe payment", { duration: 6000 });
           setIsProcessing(false);
           return;
         }

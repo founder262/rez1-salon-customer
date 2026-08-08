@@ -213,9 +213,8 @@ const BookingsPage = () => {
 
   // Refund status badge helpers
   const refundBadge = (b: any) => {
-    if (!b.refund_status && !b.refund_amount) return null;
     const status = b.refund_status;
-    const amount = b.refund_amount;
+    const amount = b.refund_amount ?? Math.max(0, (b.total_amount || 0) - (b.platform_fee || 25));
 
     if (status === "processing") {
       return (
