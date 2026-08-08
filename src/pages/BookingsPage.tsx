@@ -341,9 +341,7 @@ const BookingsPage = () => {
                 {/* Refund breakdown */}
                 {(() => {
                   const { refundAmount, platformFee } = getRefundPreview(cancelTarget);
-                  const isPaid =
-                    (cancelTarget?.payment_method === "razorpay" || cancelTarget?.payment_method === "phonepe" || cancelTarget?.phonepe_merchant_transaction_id) &&
-                    cancelTarget?.payment_status === "paid";
+                  const isPaid = cancelTarget?.payment_status === "paid";
 
                   return isPaid ? (
                     <div className="rounded-xl p-3 space-y-2" style={{ background: "rgba(184,134,11,0.08)", border: "1px solid rgba(184,134,11,0.2)" }}>
@@ -563,7 +561,7 @@ const BookingsPage = () => {
                             <RefreshCcw className="h-3 w-3" />
                             Reschedule Slot
                           </button>
-                          {b.payment_status === 'paid' && (b.payment_method === 'razorpay' || b.payment_method === 'phonepe' || b.phonepe_merchant_transaction_id) && (
+                          {b.payment_status === 'paid' && (
                             <button
                               onClick={async () => {
                                 try {

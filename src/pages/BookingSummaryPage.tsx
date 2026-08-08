@@ -145,7 +145,6 @@ const BookingSummaryPage = () => {
         personCount,
         durationMinutes: totalDuration,
         services: selectedServices,
-        razorpayPaymentId: rzpPaymentId || null,
         serviceNames,
         customerName,
         slotTimeLabel: formatSlotLabel(selectedSlot),
@@ -195,7 +194,7 @@ const BookingSummaryPage = () => {
       return;
     }
 
-    const isGatewayEnabled = platformConfig?.phonepe_enabled ?? platformConfig?.razorpay_enabled ?? true;
+    const isGatewayEnabled = platformConfig?.phonepe_enabled ?? true;
 
     if (isGatewayEnabled) {
       setIsProcessing(true);
