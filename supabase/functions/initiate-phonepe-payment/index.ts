@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     const clientId      = (config?.phonepe_client_id      || Deno.env.get("PHONEPE_CLIENT_ID")      || "").trim();
     const clientSecret  = (config?.phonepe_client_secret  || Deno.env.get("PHONEPE_CLIENT_SECRET")  || "").trim();
     const clientVersion = (config?.phonepe_client_version || Deno.env.get("PHONEPE_CLIENT_VERSION") || "1").trim();
-    const saltKey       = (config?.phonepe_salt_key       || Deno.env.get("PHONEPE_SALT_KEY")       || "099eb0cd-02fc-4e41-88db-1032db451407").trim();
+    const saltKey       = (config?.phonepe_salt_key       || Deno.env.get("PHONEPE_SALT_KEY")       || "").trim();
     const saltIndex     = (config?.phonepe_salt_index     || Deno.env.get("PHONEPE_SALT_INDEX")     || "1").trim();
     const rawEnv        = (config?.phonepe_env || Deno.env.get("PHONEPE_ENV") || "UAT").toUpperCase().trim();
     const isProd        = ["PROD", "PRODUCTION", "LIVE"].includes(rawEnv);
@@ -64,6 +64,7 @@ Deno.serve(async (req) => {
 
     let finalRedirectLink: string | null = null;
     let pg2Failed = false;
+    let lastPgError = "";
 
     // ══════════════════════════════════════════════════════════
     // PG 2.0 Flow — OAuth Client Credentials (clientId + secret)
@@ -122,23 +123,32 @@ Deno.serve(async (req) => {
           if (payRes.ok && payData.redirectUrl) {
             finalRedirectLink = payData.redirectUrl;
           } else {
-            console.warn("[initiate-phonepe] PG 2.0 failed, falling back to PG 1.x", payData);
+            const code = payData?.code || payRes.status;
+            const msg = payData?.message || "PhonePe PG 2.0 checkout failed";
+            lastPgError = `PhonePe PG 2.0 (${code}): ${msg}`;
+            console.warn("[initiate-phonepe] PG 2.0 failed:", lastPgError);
             pg2Failed = true;
           }
         } else {
-          console.warn("[initiate-phonepe] OAuth token failed, falling back to PG 1.x", tokenData);
+          const code = tokenData?.code || tokenRes.status;
+          const msg = tokenData?.message || "OAuth authentication failed";
+          lastPgError = `PhonePe OAuth (${code}): ${msg}`;
+          console.warn("[initiate-phonepe] OAuth token failed:", lastPgError);
           pg2Failed = true;
         }
-      } catch (oauthErr) {
+      } catch (oauthErr: any) {
+        lastPgError = `OAuth Exception: ${oauthErr.message}`;
         console.error("[initiate-phonepe] OAuth exception:", oauthErr);
         pg2Failed = true;
       }
     }
 
     // ══════════════════════════════════════════════════════════
-    // PG 1.x Fallback — Salt Key / SHA256 signing
+    // PG 1.x Fallback — Salt Key / SHA256 signing (only if saltKey provided)
     // ══════════════════════════════════════════════════════════
-    if (!finalRedirectLink && (pg2Failed || !clientId || !clientSecret)) {
+    const activeSaltKey = saltKey || (!isProd ? "099eb0cd-02fc-4e41-88db-1032db451407" : "");
+
+    if (!finalRedirectLink && (pg2Failed || !clientId || !clientSecret) && activeSaltKey) {
       console.log("[initiate-phonepe] Executing PG 1.x salt-key flow");
 
       const baseUrl = isProd
@@ -158,7 +168,7 @@ Deno.serve(async (req) => {
       };
 
       const base64Payload = btoa(JSON.stringify(payloadObj));
-      const stringToSign  = base64Payload + "/pg/v1/pay" + saltKey;
+      const stringToSign  = base64Payload + "/pg/v1/pay" + activeSaltKey;
       const hash          = await sha256(stringToSign);
       const xVerify       = `${hash}###${saltIndex}`;
 
@@ -175,21 +185,15 @@ Deno.serve(async (req) => {
         finalRedirectLink = phonepeData.data?.instrumentResponse?.redirectInfo?.url;
       } else {
         const errMsg = phonepeData.message || phonepeData.code || "PhonePe payment initiation failed";
-        console.error("[initiate-phonepe] PG 1.x error:", errMsg, phonepeData);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `PhonePe Error (${phonepeData.code || phonepeRes.status}): ${errMsg}`,
-            raw: phonepeData,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        lastPgError = `PhonePe PG 1.x (${phonepeData.code || phonepeRes.status}): ${errMsg}`;
+        console.error("[initiate-phonepe] PG 1.x error:", lastPgError);
       }
     }
 
     if (!finalRedirectLink) {
+      const displayError = lastPgError || "PhonePe Gateway checkout unavailable. Please use Direct UPI.";
       return new Response(
-        JSON.stringify({ success: false, error: "PhonePe did not return a checkout URL. Please verify your Merchant ID and Salt Key in Admin settings." }),
+        JSON.stringify({ success: false, error: displayError }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
