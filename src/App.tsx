@@ -62,6 +62,10 @@ const App = () => (
               <Route path="/register-salon" element={<RegisterSalonPage />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/payment-status" element={<PaymentStatusPage />} />
+              <Route path="/payment/success" element={<PaymentStatusPage />} />
+              <Route path="/payment/failed" element={<PaymentStatusPage />} />
+              <Route path="/payment/cancel" element={<PaymentStatusPage />} />
+              <Route path="/payment/*" element={<PaymentStatusPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
             <BottomNav />
