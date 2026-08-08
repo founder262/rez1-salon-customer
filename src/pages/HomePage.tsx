@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Star, Clock, MapPin, Search, Heart, Bell, Store, Navigation } from "lucide-react";
@@ -101,7 +101,7 @@ const HomePage = () => {
     init();
   }, []);
 
-  const fetchSalons = async () => {
+  const fetchSalons = useCallback(async () => {
     // Fetch all approved/visible salons — category & search filtering done client-side
     // for maximum flexibility (unisex logic, multi-field search, service name search)
     let q = supabase
@@ -112,7 +112,8 @@ const HomePage = () => {
       .eq("is_approved", true)
       .order("rating", { ascending: false });
 
-    // Only apply location filter when no search query is active
+    // Apply location filter only when there is no active search query
+    // (a query in either mode should search across all locations)
     if (!query && selectedLocationId) {
       q = q.eq("location_id", selectedLocationId);
     }
@@ -139,36 +140,43 @@ const HomePage = () => {
       });
     }
 
-    // ── MULTI-FIELD SEARCH (client-side, case-insensitive, partial + service matching) ──
+    // ── SEARCH FILTER (client-side, case-insensitive, partial match) ──
+    // "salon" mode  → matches salon name + service names + service categories
+    // "location" mode → matches location name + address only
     if (query.trim()) {
       const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
       result = result.filter((salon: any) => {
-        const serviceNames = (salon.services || []).map((s: any) => s.name || "").join(" ");
-        const serviceCategories = (salon.services || []).map((s: any) => s.category || "").join(" ");
-        
         let locationName = "";
         if (salon.locations) {
           if (Array.isArray(salon.locations)) {
             locationName = salon.locations.map((l: any) => l.name || "").join(" ");
-          } else if (typeof salon.locations === 'object') {
+          } else if (typeof salon.locations === "object") {
             locationName = salon.locations.name || "";
           }
         }
 
-        const corpus = [
-          salon.name || "",
-          salon.address || "",
-          locationName,
-          serviceNames,
-          serviceCategories,
-        ].join(" ").toLowerCase();
+        let corpus: string;
+        if (searchMode === "location") {
+          // Location mode: only match against geographic fields
+          corpus = [locationName, salon.address || ""].join(" ").toLowerCase();
+        } else {
+          // Salon mode: match against name, services, service categories
+          const serviceNames = (salon.services || []).map((s: any) => s.name || "").join(" ");
+          const serviceCategories = (salon.services || []).map((s: any) => s.category || "").join(" ");
+          corpus = [
+            salon.name || "",
+            serviceNames,
+            serviceCategories,
+          ].join(" ").toLowerCase();
+        }
+
         // All terms must match (AND logic across search words)
         return terms.every((term) => corpus.includes(term));
       });
     }
 
     setSalons(result);
-  };
+  }, [query, selectedLocationId, categoryFilter, categoriesEnabled, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchBanners = async () => {
     const now = new Date();
@@ -185,7 +193,7 @@ const HomePage = () => {
   // Fetch salons whenever location / filters / search change
   useEffect(() => {
     fetchSalons();
-  }, [selectedLocationId, categoryFilter, query, searchMode, categoriesEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchSalons]);
 
   // Fetch banners once on mount
   useEffect(() => {
@@ -232,6 +240,7 @@ const HomePage = () => {
   }, []);
 
   // Real-time listener for services changes
+  // fetchSalons is in deps so the listener always calls the freshest version
   useEffect(() => {
     const channel = supabase
       .channel('home-services-sync')
@@ -240,7 +249,7 @@ const HomePage = () => {
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [selectedLocationId, categoryFilter, query, searchMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchSalons]);
 
   return (
     <div className="min-h-[100dvh] bg-background safe-bottom">

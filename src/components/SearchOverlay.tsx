@@ -58,6 +58,9 @@ const SearchOverlay = ({
                 onClick={() => {
                   setSearchMode(mode);
                   setQuery("");
+                  // Reset category filter when switching modes so stale
+                  // filters don't bleed into the other search context
+                  setCategoryFilter("All");
                 }}
                 className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold capitalize transition-all duration-300 ${
                   searchMode === mode
