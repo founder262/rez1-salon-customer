@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, Clock, MapPin, X, AlertTriangle, RefreshCcw } from "lucide-react";
+import { Calendar, Clock, MapPin, X, AlertTriangle, RefreshCcw, AlertCircle } from "lucide-react";
 import BackButton from "@/components/BackButton";
 import Logo from "@/components/Logo";
 import { supabase } from "@/lib/supabase";
@@ -138,9 +138,11 @@ const BookingsPage = () => {
       // Build success toast with refund info
       if (data.refund_amount > 0 && data.refund_status === "processing") {
         toast.success(
-          `Booking cancelled! ₹${data.refund_amount} refund initiated — arrives within 1 hour. Platform fee ₹${data.platform_fee} is non-refundable.`,
-          { duration: 7000 }
+          `Booking cancelled! Refund of ₹${data.refund_amount} initiated — will be credited within 2–7 business days depending on your bank. Platform fee ₹${data.platform_fee} is non-refundable.`,
+          { duration: 8000 }
         );
+      } else if (data.refund_status === 'failed') {
+        toast.warning(`Booking cancelled, but the automatic refund could not be processed. Please contact support to get your refund of ₹${data.refund_amount}.`, { duration: 8000 });
       } else {
         toast.success("Booking cancelled successfully.");
       }
@@ -218,25 +220,69 @@ const BookingsPage = () => {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-1 text-[10px] font-bold text-amber-400">
           <RefreshCcw className="h-2.5 w-2.5 animate-spin" />
-          Refund Processing ₹{amount}
+          Refund Initiated · ₹{amount} · 2-7 business days
         </span>
       );
     }
     if (status === "refunded") {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-green-500/15 px-2.5 py-1 text-[10px] font-bold text-green-400">
-          ✓ Refunded ₹{amount}
+          ✓ Refund Sent to Bank · ₹{amount}
         </span>
       );
     }
     if (status === "failed") {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2.5 py-1 text-[10px] font-bold text-red-400">
-          ✗ Refund Failed
+          ✗ Refund Failed · Action Required Below
+        </span>
+      );
+    }
+    if (status === "refund_requested") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2.5 py-1 text-[10px] font-bold text-purple-400">
+          🚨 Refund Help Requested · Admin Reviewing
+        </span>
+      );
+    }
+    if (status === "pending_choice") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-bold text-primary">
+          Choose: Refund or Reschedule below
         </span>
       );
     }
     return null;
+  };
+
+  const isOlderThan1Hour = (dateStr: string) => {
+    if (!dateStr) return true;
+    const time = new Date(dateStr).getTime();
+    return (Date.now() - time) > 3600000; // 1 hour in ms
+  };
+
+  const handleRequestAdminRefund = async (bookingId: string) => {
+    try {
+      const confirmReq = window.confirm(
+        "Has it been over 1 hour without receiving your refund? This will escalate your request to Admin for direct verification."
+      );
+      if (!confirmReq) return;
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          refund_status: "refund_requested",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", bookingId);
+
+      if (error) throw error;
+
+      toast.success("Refund request submitted to Admin! They will verify and process it shortly.");
+      fetchBookings();
+    } catch (err: any) {
+      toast.error("Failed to submit refund request. Please try again.");
+    }
   };
 
   return (
@@ -314,7 +360,7 @@ const BookingsPage = () => {
                       </div>
                       <div className="border-t pt-2 flex justify-between text-xs font-bold" style={{ borderColor: "rgba(184,134,11,0.2)" }}>
                         <span style={{ color: "#B8860B" }}>You will receive</span>
-                        <span style={{ color: "#B8860B" }}>₹{refundAmount} within 1 hr</span>
+                        <span style={{ color: "#B8860B" }}>₹{refundAmount} · within 2-7 business days</span>
                       </div>
                     </div>
                   ) : (
@@ -547,6 +593,40 @@ const BookingsPage = () => {
                             </button>
                           )}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Refund Escalation Button for Customer */}
+                    {activeTab === "cancelled" && b.payment_status === "paid" && b.refund_status !== "refunded" && (
+                      <div className="mt-2.5">
+                        {b.refund_status === "refund_requested" ? (
+                          <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 p-2.5 text-xs text-purple-300">
+                            <p className="font-semibold flex items-center gap-1.5">
+                              <AlertCircle className="h-3.5 w-3.5 text-purple-400" />
+                              Refund Escalation Submitted
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-purple-300/80">
+                              Admin is reviewing your transaction. You will receive a notification once settled.
+                            </p>
+                          </div>
+                        ) : (b.refund_status === "failed" || (b.refund_status === "processing" && isOlderThan1Hour(b.updated_at || b.cancelled_at))) ? (
+                          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5">
+                            <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                              {b.refund_status === "failed" ? "Automatic Refund Failed" : "Refund Taking Longer Than 1 Hour?"}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-amber-200/80">
+                              If funds have not credited to your account, request direct Admin assistance below.
+                            </p>
+                            <button
+                              onClick={() => handleRequestAdminRefund(b.id)}
+                              className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-black hover:bg-amber-400 transition-all active:scale-[0.97]"
+                            >
+                              <AlertCircle className="h-3.5 w-3.5" />
+                              Request Refund from Admin
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     )}
                   </div>
