@@ -108,7 +108,6 @@ Deno.serve(async (req) => {
               merchantOrderId: merchantTransactionId,
               amount: Math.round(amount * 100),
               expireAfter: 1200,
-              metaInfo: { udf1: bookingId, udf2: "REZ1_SALON" },
               paymentFlow: {
                 type: "PG_CHECKOUT",
                 message: "REZ1 Salon Booking",
@@ -144,11 +143,12 @@ Deno.serve(async (req) => {
     }
 
     // ══════════════════════════════════════════════════════════
-    // PG 1.x Fallback — Salt Key / SHA256 signing (only if saltKey provided)
+    // PG 1.x Fallback — ONLY for UAT / when no V2 credentials at all
+    // In PROD we must use V2 only. Do NOT fall back to V1 in production.
     // ══════════════════════════════════════════════════════════
-    const activeSaltKey = saltKey || (!isProd ? "099eb0cd-02fc-4e41-88db-1032db451407" : "");
+    const activeSaltKey = !isProd ? (saltKey || "099eb0cd-02fc-4e41-88db-1032db451407") : "";
 
-    if (!finalRedirectLink && (pg2Failed || !clientId || !clientSecret) && activeSaltKey) {
+    if (!finalRedirectLink && !isProd && (pg2Failed || !clientId || !clientSecret) && activeSaltKey) {
       console.log("[initiate-phonepe] Executing PG 1.x salt-key flow");
 
       const baseUrl = isProd

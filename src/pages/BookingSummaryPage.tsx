@@ -208,11 +208,12 @@ const BookingSummaryPage = () => {
 
         const customerPhone = customerData?.phone || user?.phone || "";
 
-        // ── STEP 1: Create booking as 'upcoming' with payment_status 'pending' ──
+        // ── STEP 1: Create booking as 'pending_payment' so it does NOT consume seat capacity ──
+        // Status is upgraded to 'upcoming' only after PhonePe payment is verified successfully.
         const { data: pendingBooking, error: bookingErr } = await insertBooking(
           user.id,
           "phonepe",
-          "upcoming",
+          "pending_payment",
           "pending"
         );
 
