@@ -14,42 +14,87 @@ const PaymentStatusPage = () => {
   const [errorMessage, setErrorMessage] = useState("");
   const [bookingData, setBookingData] = useState<any>(null);
 
-  const merchantTransactionId = searchParams.get("merchantTransactionId") || searchParams.get("transactionId");
+  // Razorpay returns payment details as URL params on redirect
   const bookingId = searchParams.get("bookingId");
+  const razorpayOrderId = searchParams.get("razorpay_order_id");
+  const razorpayPaymentId = searchParams.get("razorpay_payment_id");
+  const razorpaySignature = searchParams.get("razorpay_signature");
 
   useEffect(() => {
     const verifyPayment = async () => {
       try {
-        const { data: resData, error: fnError } = await supabase.functions.invoke("verify-phonepe-payment", {
-          body: {
-            merchantTransactionId,
-            bookingId,
-          },
-        });
+        // If Razorpay returned signed params (redirect flow), verify them
+        if (bookingId && razorpayOrderId && razorpayPaymentId && razorpaySignature) {
+          const { data: resData, error: fnError } = await supabase.functions.invoke("verify-razorpay-payment", {
+            body: {
+              razorpay_order_id: razorpayOrderId,
+              razorpay_payment_id: razorpayPaymentId,
+              razorpay_signature: razorpaySignature,
+              booking_id: bookingId,
+            },
+          });
 
-        if (fnError || !resData?.success) {
-          const msg = resData?.message || fnError?.message || "Payment verification pending or failed.";
-          setErrorMessage(msg);
-          setStatus("failed");
-          toast.error(msg);
+          if (fnError || !resData?.success) {
+            const msg = resData?.error || fnError?.message || "Payment verification failed.";
+            setErrorMessage(msg);
+            setStatus("failed");
+            toast.error(msg);
+            return;
+          }
+
+          setStatus("success");
+          setBookingData(resData.booking);
+          toast.success("Payment verified! Booking confirmed.");
+
+          setTimeout(() => {
+            const salonId = resData.booking?.salon_id || "";
+            navigate(`/confirmation/${salonId}`, {
+              state: {
+                booking: resData.booking,
+                finalPayableAmount: resData.booking?.total_amount,
+                paymentVerified: true,
+              },
+              replace: true,
+            });
+          }, 1500);
           return;
         }
 
-        setStatus("success");
-        setBookingData(resData.booking);
-        toast.success("Payment verified! Booking confirmed.");
+        // If bookingId only — poll booking status (useful for webhook-confirmed flows)
+        if (bookingId) {
+          const { data: booking } = await supabase
+            .from("bookings")
+            .select("*")
+            .eq("id", bookingId)
+            .maybeSingle();
 
-        setTimeout(() => {
-          const salonId = resData.booking?.salon_id || "";
-          navigate(`/confirmation/${salonId}`, {
-            state: {
-              booking: resData.booking,
-              finalPayableAmount: resData.booking?.total_amount,
-              paymentVerified: true,
-            },
-            replace: true,
-          });
-        }, 1500);
+          if (booking?.payment_status === "paid") {
+            setStatus("success");
+            setBookingData(booking);
+            toast.success("Payment confirmed! Booking confirmed.");
+            setTimeout(() => {
+              navigate(`/confirmation/${booking.salon_id}`, {
+                state: {
+                  booking,
+                  finalPayableAmount: booking.total_amount,
+                  paymentVerified: true,
+                },
+                replace: true,
+              });
+            }, 1500);
+            return;
+          }
+
+          // Payment still pending — show failed state
+          setErrorMessage("Payment not yet confirmed. If you completed the payment, please wait a moment and retry.");
+          setStatus("failed");
+          return;
+        }
+
+        // No params — nothing to verify
+        setErrorMessage("No payment details found. Please check your bookings.");
+        setStatus("failed");
+
       } catch (err: any) {
         console.error("Payment status verification error:", err);
         setErrorMessage(err.message || "Unable to verify payment.");
@@ -58,7 +103,7 @@ const PaymentStatusPage = () => {
     };
 
     verifyPayment();
-  }, [merchantTransactionId, bookingId, navigate]);
+  }, [bookingId, razorpayOrderId, razorpayPaymentId, razorpaySignature, navigate]);
 
   return (
     <div className="min-h-[100dvh] bg-background flex flex-col items-center justify-center p-6 text-center">
@@ -80,7 +125,7 @@ const PaymentStatusPage = () => {
             Verifying Your Payment
           </h2>
           <p className="text-sm text-muted-foreground max-w-xs">
-            Please wait while we confirm your payment details with PhonePe...
+            Please wait while we confirm your payment details with Razorpay...
           </p>
         </motion.div>
       )}

@@ -194,7 +194,9 @@ const BookingSummaryPage = () => {
       return;
     }
 
-    const isGatewayEnabled = platformConfig?.phonepe_enabled ?? true;
+    // Razorpay is always the primary gateway. UPI modal is fallback when no razorpay key configured.
+    const razorpayKeyId = platformConfig?.razorpay_key_id;
+    const isGatewayEnabled = !!razorpayKeyId;
 
     if (isGatewayEnabled) {
       setIsProcessing(true);
@@ -207,12 +209,13 @@ const BookingSummaryPage = () => {
           .maybeSingle();
 
         const customerPhone = customerData?.phone || user?.phone || "";
+        const customerName = customerData?.full_name || user?.user_metadata?.full_name || "Customer";
+        const customerEmail = user?.email || "";
 
-        // ── STEP 1: Create booking as 'pending_payment' so it does NOT consume seat capacity ──
-        // Status is upgraded to 'upcoming' only after PhonePe payment is verified successfully.
+        // ── STEP 1: Create booking as 'pending_payment' so capacity is held but not confirmed ──
         const { data: pendingBooking, error: bookingErr } = await insertBooking(
           user.id,
-          "phonepe",
+          "razorpay",
           "pending_payment",
           "pending"
         );
@@ -249,31 +252,112 @@ const BookingSummaryPage = () => {
           }
         }
 
-        // ── STEP 2: Initiate PhonePe Payment Redirect ──
-        const redirectUrl = `${window.location.origin}/payment-status?bookingId=${pendingBooking.id}`;
-
-        const { data: payResult, error: payErr } = await supabase.functions.invoke('initiate-phonepe-payment', {
+        // ── STEP 2: Create Razorpay Order ──
+        const { data: orderResult, error: orderErr } = await supabase.functions.invoke('create-razorpay-order', {
           body: {
-            bookingId: pendingBooking.id,
             amount: finalPayableAmount,
-            customerPhone,
-            redirectUrl,
+            salonId: salon.id,
+            currency: 'INR',
+            bookingId: pendingBooking.id,
           }
         });
 
-        const errorMessage = payResult?.error || (payErr ? (payErr.message === "Edge Function returned a non-2xx status code" ? "PhonePe payment edge function error" : payErr.message) : null);
-
-        if (payErr || !payResult?.success || !payResult?.redirectUrl) {
-          toast.error(errorMessage || "Failed to initiate PhonePe payment. Please try again.", { duration: 6000 });
+        if (orderErr || !orderResult?.success || !orderResult?.orderId) {
+          const errMsg = orderResult?.error || orderErr?.message || "Failed to create payment order.";
+          toast.error(errMsg, { duration: 6000 });
           setIsProcessing(false);
           return;
         }
 
-        // Redirect customer to PhonePe hosted checkout page
-        window.location.href = payResult.redirectUrl;
+        // ── STEP 3: Open Razorpay Checkout ──
+        const loadRazorpay = () => new Promise<boolean>((resolve) => {
+          if ((window as any).Razorpay) { resolve(true); return; }
+          const script = document.createElement('script');
+          script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+
+        const loaded = await loadRazorpay();
+        if (!loaded) {
+          toast.error("Failed to load payment gateway. Please check your internet connection.");
+          setIsProcessing(false);
+          return;
+        }
+
+        setIsProcessing(false); // Hide processing while checkout modal is open
+
+        const options = {
+          key: orderResult.keyId,
+          amount: orderResult.amount,
+          currency: orderResult.currency,
+          name: salon.name,
+          description: `Booking at ${salon.name}`,
+          image: salon.salon_images?.[0] || undefined,
+          order_id: orderResult.orderId,
+          prefill: {
+            name: customerName,
+            contact: customerPhone,
+            email: customerEmail,
+          },
+          notes: {
+            booking_id: pendingBooking.id,
+            salon_id: salon.id,
+          },
+          theme: { color: '#B8860B' },
+          handler: async (response: any) => {
+            setIsProcessing(true);
+            try {
+              // ── STEP 4: Verify payment signature on backend ──
+              const { data: verifyResult, error: verifyErr } = await supabase.functions.invoke('verify-razorpay-payment', {
+                body: {
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                  booking_id: pendingBooking.id,
+                }
+              });
+
+              if (verifyErr || !verifyResult?.success) {
+                toast.error(verifyResult?.error || "Payment verification failed. Please contact support.");
+                setIsProcessing(false);
+                return;
+              }
+
+              toast.success("Payment verified! Booking confirmed.");
+              navigate(`/confirmation/${salon.id}`, {
+                state: {
+                  booking: verifyResult.booking || { id: pendingBooking.id },
+                  finalPayableAmount,
+                  paymentVerified: true,
+                },
+                replace: true,
+              });
+            } catch (verifyErr: any) {
+              console.error("Payment verification error:", verifyErr);
+              toast.error("Payment verification failed. Contact support if amount was deducted.");
+              setIsProcessing(false);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              setIsProcessing(false);
+              toast.error("Payment was cancelled.", { duration: 3000 });
+            }
+          }
+        };
+
+        const rzp = new (window as any).Razorpay(options);
+        rzp.on('payment.failed', (response: any) => {
+          console.error('Razorpay payment failed:', response.error);
+          toast.error(`Payment failed: ${response.error?.description || 'Please try again.'}`);
+          setIsProcessing(false);
+        });
+        rzp.open();
 
       } catch (err: any) {
-        console.error("PhonePe payment error:", err);
+        console.error("Razorpay payment error:", err);
         toast.error("Payment initialization failed. Please try again.");
         setIsProcessing(false);
       }
@@ -540,7 +624,7 @@ const BookingSummaryPage = () => {
                       Pay by UPI App
                     </p>
                     <div className="grid grid-cols-4 gap-3 mb-3">
-                      {/* PhonePe */}
+                      {/* UPI App — PhonePe Deep Link */}
                       <a
                         href={`phonepe://pay?pa=${salon.upi_number}&pn=${encodeURIComponent(salon.name)}&am=${finalPayableAmount}&cu=INR&tn=${encodeURIComponent("REZ1 Booking")}`}
                         className="flex flex-col items-center gap-1.5 active:opacity-70"
@@ -550,7 +634,7 @@ const BookingSummaryPage = () => {
                           style={{ background: "linear-gradient(135deg, #5f259f, #7b2fbe)" }}>
                           P
                         </div>
-                        <span className="text-[10px] font-medium text-center" style={{ color: "#aaa" }}>PhonePe</span>
+                        <span className="text-[10px] font-medium text-center" style={{ color: "#aaa" }}>PhonePe App</span>
                       </a>
 
                       {/* Google Pay */}
@@ -841,20 +925,20 @@ const BookingSummaryPage = () => {
             <span>
               {state?.reschedulingBookingId 
                 ? "Confirm Reschedule" 
-                : (platformConfig?.phonepe_enabled ?? true)
+                : platformConfig?.razorpay_key_id
                 ? "Pay Securely" 
                 : "Pay via UPI"} - ₹{state?.reschedulingBookingId ? 0 : finalPayableAmount}
             </span>
             <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
           </button>
           <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-widest text-muted-foreground opacity-60">
-            {state?.reschedulingBookingId ? "Free slot rescheduling" : (platformConfig?.phonepe_enabled ?? true) ? "Powered by PhonePe" : "Direct payment to salon"}
+            {state?.reschedulingBookingId ? "Free slot rescheduling" : platformConfig?.razorpay_key_id ? "Powered by Razorpay" : "Direct payment to salon"}
           </p>
           <p className="mt-1 text-center text-[11px] text-muted-foreground opacity-80">
             {state?.reschedulingBookingId 
               ? "Confirming will instantly reschedule your slot. No extra charges apply." 
-              : (platformConfig?.phonepe_enabled ?? true)
-              ? "Secure payments via PhonePe — UPI, cards, wallets, netbanking." 
+              : platformConfig?.razorpay_key_id
+              ? "Secure payments via Razorpay — UPI, cards, wallets, netbanking." 
               : "Complete UPI payment in your app, then confirm here."}
           </p>
         </div>

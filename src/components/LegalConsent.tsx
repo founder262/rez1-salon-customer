@@ -217,7 +217,7 @@ export const LegalConsent = ({ onConsentChange }: LegalConsentProps) => {
                   <div>
                     <h3 className="font-bold text-white mb-2">4. PAYMENT INFORMATION</h3>
                     <ul className="list-disc pl-5 space-y-1">
-                      <li>Payments are processed through secure third-party providers (e.g., PhonePe)</li>
+                      <li>Payments are processed through secure third-party providers (e.g., Razorpay)</li>
                       <li>REZ1 does not store card or banking details</li>
                       <li>All financial data is handled securely by payment partners</li>
                     </ul>
